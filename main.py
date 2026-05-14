@@ -7,9 +7,8 @@
 
 import logging
 from datetime import datetime
-from pathlib import Path
 
-from config import CONFIG, OFFICIAL_URLS
+from config import OFFICIAL_URLS
 from src.cli import parse_args
 from src.data_manager import get_tender_data
 from src.email_sender import EmailSender
@@ -62,7 +61,7 @@ def main() -> int:
         print(f"        {company}: {count} 条")
 
     # 生成 PDF
-    print(f"\n[2/2] 正在生成PDF报告...")
+    print("\n[2/2] 正在生成PDF报告...")
     generator = PDFGenerator(chinese_font=chinese_font)
     output_path = generator.generate(
         tenders=tenders,
@@ -73,7 +72,7 @@ def main() -> int:
 
     # 邮件推送
     if not args.no_email:
-        print(f"\n[邮件] 正在发送邮件...")
+        print("\n[邮件] 正在发送邮件...")
         email_sender = EmailSender()
         success, error = email_sender.send_pdf_report(output_path)
         if not success and error:
@@ -82,7 +81,7 @@ def main() -> int:
     # 完成
     print("\n" + "=" * 70)
     print(f"  输出文件: {output_path}")
-    print(f"  生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("  生成时间: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     print(f"  日志文件: {log_file}")
     print("=" * 70)
 
@@ -92,4 +91,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())

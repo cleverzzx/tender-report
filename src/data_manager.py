@@ -129,15 +129,17 @@ def _sort_by_publish_date(tenders: Dict[str, List[Tender]]) -> Dict[str, List[Te
             company_tenders = tenders[company]
             # 按发布日期排序，最新在前
             company_tenders.sort(
-                key=lambda t: t.get_publish_date() or __import__('datetime').datetime.min,
-                reverse=True
+                key=lambda t: t.get_publish_date() or __import__("datetime").datetime.min,
+                reverse=True,
             )
             sorted_tenders[company] = company_tenders
 
     return sorted_tenders
 
 
-def get_tender_data(try_scrape: bool = False) -> Tuple[Dict[str, List[Tender]], int, DetectionStats]:
+def get_tender_data(
+    try_scrape: bool = False,
+) -> Tuple[Dict[str, List[Tender]], int, DetectionStats]:
     """获取标讯数据，优先使用爬取结果，失败则用回退数据。
 
     Args:

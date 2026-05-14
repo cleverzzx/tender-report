@@ -27,31 +27,41 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--no-email", action="store_true",
+        "--no-email",
+        action="store_true",
         help="跳过邮件推送",
     )
     parser.add_argument(
-        "--output-dir", type=str, default=None,
+        "--output-dir",
+        type=str,
+        default=None,
         help="指定报告输出目录（默认: reports/）",
     )
     parser.add_argument(
-        "--output", type=str, default=None,
+        "--output",
+        type=str,
+        default=None,
         help="指定输出文件名（默认: 孟加拉标讯报告_YYYYMMDD_HHMMSS.pdf）",
     )
     parser.add_argument(
-        "--validate", action="store_true",
+        "--validate",
+        action="store_true",
         help="生成报告前校验所有链接",
     )
     parser.add_argument(
-        "--validate-only", action="store_true",
+        "--validate-only",
+        action="store_true",
         help="仅校验链接，不生成报告",
     )
     parser.add_argument(
-        "--scrape", action="store_true",
+        "--scrape",
+        action="store_true",
         help="尝试爬取最新标讯列表",
     )
     parser.add_argument(
-        "--verbose", "-v", action="store_true",
+        "--verbose",
+        "-v",
+        action="store_true",
         help="显示详细日志",
     )
 

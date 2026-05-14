@@ -4,14 +4,20 @@
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from reportlab.lib.colors import HexColor, black, blue
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import (  # type: ignore[attr-defined]
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
 from config import CONFIG
 from src.models import Tender
@@ -56,11 +62,11 @@ class PDFGenerator:
         Args:
             chinese_font: 中文字体名称，None 时自动注册
         """
-        self.chinese_font = chinese_font or register_chinese_fonts()
-        self.styles = self._create_styles()
         self.primary_color = HexColor("#1a365d")
         self.accent_color = HexColor("#e53e3e")
         self.secondary_color = HexColor("#4a5568")
+        self.chinese_font = chinese_font or register_chinese_fonts()
+        self.styles = self._create_styles()
 
     def _create_styles(self) -> Dict[str, ParagraphStyle]:
         """创建 PDF 段落样式。
@@ -74,58 +80,89 @@ class PDFGenerator:
 
         return {
             "title": ParagraphStyle(
-                "Title", fontName=bold_font,
-                fontSize=fs.get("title", 18), leading=fs.get("title", 18) + 4,
-                alignment=TA_CENTER, textColor=self.primary_color, spaceAfter=5,
+                "Title",
+                fontName=bold_font,
+                fontSize=fs.get("title", 18),
+                leading=fs.get("title", 18) + 4,
+                alignment=TA_CENTER,
+                textColor=self.primary_color,
+                spaceAfter=5,
             ),
             "subtitle": ParagraphStyle(
-                "Subtitle", fontName=font,
-                fontSize=fs.get("subtitle", 12), leading=fs.get("subtitle", 12) + 4,
-                alignment=TA_CENTER, textColor=self.secondary_color, spaceAfter=5,
+                "Subtitle",
+                fontName=font,
+                fontSize=fs.get("subtitle", 12),
+                leading=fs.get("subtitle", 12) + 4,
+                alignment=TA_CENTER,
+                textColor=self.secondary_color,
+                spaceAfter=5,
             ),
             "section": ParagraphStyle(
-                "Section", fontName=bold_font,
-                fontSize=fs.get("section", 14), leading=fs.get("section", 14) + 4,
-                textColor=self.primary_color, spaceBefore=15, spaceAfter=10,
+                "Section",
+                fontName=bold_font,
+                fontSize=fs.get("section", 14),
+                leading=fs.get("section", 14) + 4,
+                textColor=self.primary_color,
+                spaceBefore=15,
+                spaceAfter=10,
             ),
             "field_name": ParagraphStyle(
-                "FieldName", fontName=bold_font,
-                fontSize=fs.get("field_name", 12), leading=fs.get("field_name", 12) + 4,
+                "FieldName",
+                fontName=bold_font,
+                fontSize=fs.get("field_name", 12),
+                leading=fs.get("field_name", 12) + 4,
                 textColor=black,
             ),
             "key": ParagraphStyle(
-                "Key", fontName=bold_font,
-                fontSize=fs.get("key", 11), leading=fs.get("key", 11) + 3,
+                "Key",
+                fontName=bold_font,
+                fontSize=fs.get("key", 11),
+                leading=fs.get("key", 11) + 3,
                 textColor=HexColor("#c53030"),
             ),
             "special": ParagraphStyle(
-                "Special", fontName=font,
-                fontSize=fs.get("special", 11), leading=fs.get("special", 11) + 3,
+                "Special",
+                fontName=font,
+                fontSize=fs.get("special", 11),
+                leading=fs.get("special", 11) + 3,
                 textColor=HexColor("#2b6cb0"),
             ),
             "summary": ParagraphStyle(
-                "Summary", fontName=font,
-                fontSize=fs.get("summary", 12), leading=fs.get("summary", 12) + 6,
-                textColor=black, spaceAfter=5,
+                "Summary",
+                fontName=font,
+                fontSize=fs.get("summary", 12),
+                leading=fs.get("summary", 12) + 6,
+                textColor=black,
+                spaceAfter=5,
             ),
             "footer": ParagraphStyle(
-                "Footer", fontName=font,
-                fontSize=fs.get("footer", 10), leading=fs.get("footer", 10) + 4,
-                alignment=TA_CENTER, textColor=self.secondary_color,
+                "Footer",
+                fontName=font,
+                fontSize=fs.get("footer", 10),
+                leading=fs.get("footer", 10) + 4,
+                alignment=TA_CENTER,
+                textColor=self.secondary_color,
             ),
             "table_label": ParagraphStyle(
-                "TableLabel", fontName=bold_font,
-                fontSize=fs.get("table_label", 11), leading=fs.get("table_label", 11) + 3,
+                "TableLabel",
+                fontName=bold_font,
+                fontSize=fs.get("table_label", 11),
+                leading=fs.get("table_label", 11) + 3,
                 textColor=self.secondary_color,
             ),
             "table_value": ParagraphStyle(
-                "TableValue", fontName=font,
-                fontSize=fs.get("table_value", 11), leading=fs.get("table_value", 11) + 3,
+                "TableValue",
+                fontName=font,
+                fontSize=fs.get("table_value", 11),
+                leading=fs.get("table_value", 11) + 3,
                 textColor=black,
             ),
             "url_style": ParagraphStyle(
-                "UrlStyle", fontName=font,
-                fontSize=9, leading=12, textColor=blue,
+                "UrlStyle",
+                fontName=font,
+                fontSize=9,
+                leading=12,
+                textColor=blue,
             ),
         }
 
@@ -143,25 +180,30 @@ class PDFGenerator:
         is_new = tender._is_new
         new_badge = " <font color='red'>[NEW]</font>" if is_new else ""
 
-        story.append(Paragraph(
-            f"<b>标讯 {index + 1}: {tender.title}</b>{new_badge}",
-            self.styles["field_name"]
-        ))
+        story.append(
+            Paragraph(
+                f"<b>标讯 {index + 1}: {tender.title}</b>{new_badge}", self.styles["field_name"]
+            )
+        )
         story.append(Paragraph(f"■ Key: {tender.key}", self.styles["key"]))
         story.append(Paragraph(f"■ Special: {tender.special}", self.styles["special"]))
         story.append(Spacer(1, 8))
 
         # 构建表格数据
         table_data = [
-            [Paragraph(field.name, self.styles["table_label"]),
-             Paragraph(field.value, self.styles["table_value"])]
+            [
+                Paragraph(field.name, self.styles["table_label"]),
+                Paragraph(field.value, self.styles["table_value"]),
+            ]
             for field in tender.fields
         ]
         t = Table(table_data, colWidths=[120, 350])
         t.setStyle(TableStyle(self.TABLE_STYLE_CMDS))
         story.append(t)
 
-    def _render_company_section(self, story: List, section_title: str, tender_list: List[Tender]) -> None:
+    def _render_company_section(
+        self, story: List, section_title: str, tender_list: List[Tender]
+    ) -> None:
         """渲染一个公司的全部标讯。
 
         Args:
@@ -179,7 +221,9 @@ class PDFGenerator:
                 story.append(Spacer(1, 18))
         story.append(Spacer(1, 15))
 
-    def _render_summary(self, story: List, tenders: Dict[str, List[Tender]], validation_date: datetime) -> None:
+    def _render_summary(
+        self, story: List, tenders: Dict[str, List[Tender]], validation_date: datetime
+    ) -> None:
         """渲染汇总信息。
 
         Args:
@@ -228,14 +272,18 @@ class PDFGenerator:
         """
         story.append(Paragraph("—— 报告完 ——", self.styles["footer"]))
         story.append(Spacer(1, 12))
-        story.append(Paragraph(
-            f"数据来源: Petrobangla, BAPEX, SGFL, BGFCL官网（链接校验日期: {now.strftime('%Y-%m-%d')}）",
-            self.styles["footer"],
-        ))
-        story.append(Paragraph(
-            f"生成时间: {now.strftime('%Y年%m月%d日 %H:%M')} | 由自动追踪系统生成",
-            self.styles["footer"],
-        ))
+        story.append(
+            Paragraph(
+                f"数据来源: Petrobangla, BAPEX, SGFL, BGFCL官网（链接校验日期: {now.strftime('%Y-%m-%d')}）",
+                self.styles["footer"],
+            )
+        )
+        story.append(
+            Paragraph(
+                f"生成时间: {now.strftime('%Y年%m月%d日 %H:%M')} | 由自动追踪系统生成",
+                self.styles["footer"],
+            )
+        )
 
     def generate(
         self,
@@ -267,23 +315,32 @@ class PDFGenerator:
 
         # 创建文档
         doc = SimpleDocTemplate(
-            output_path, pagesize=A4,
-            leftMargin=1.5 * cm, rightMargin=1.5 * cm,
-            topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+            output_path,
+            pagesize=A4,
+            leftMargin=1.5 * cm,
+            rightMargin=1.5 * cm,
+            topMargin=1.5 * cm,
+            bottomMargin=1.5 * cm,
         )
 
         story: List = []
 
         # 标题
         story.append(Paragraph("孟加拉石油公司国际招标标讯报告", self.styles["title"]))
-        story.append(Paragraph(
-            "Bangladesh Petroleum Companies International Tender Report",
-            self.styles["subtitle"],
-        ))
-        story.append(Paragraph(
-            f"报告日期: {now.strftime('%Y年%m月%d日 %H:%M')} | 所有链接校验日期: {validation_date.strftime('%Y-%m-%d')}",
-            self.styles["subtitle"],
-        ))
+        story.append(
+            Paragraph(
+                "Bangladesh Petroleum Companies International Tender Report",
+                self.styles["subtitle"],
+            )
+        )
+        date_str = now.strftime("%Y年%m月%d日 %H:%M")
+        valid_str = validation_date.strftime("%Y-%m-%d")
+        story.append(
+            Paragraph(
+                f"报告日期: {date_str} | 所有链接校验日期: {valid_str}",
+                self.styles["subtitle"],
+            )
+        )
         story.append(Spacer(1, 10))
 
         # 汇总信息
@@ -326,7 +383,8 @@ def generate_pdf(
     from src.data_manager import get_tender_data
 
     if tenders is None:
-        tenders = get_tender_data()
+        tenders_data, _, _ = get_tender_data()
+        tenders = tenders_data
 
     generator = PDFGenerator()
     return generator.generate(tenders, output_filename, output_dir)

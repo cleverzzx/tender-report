@@ -10,7 +10,6 @@ from typing import Optional
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-
 # 中文字体搜索路径（按优先级排序）
 FONT_PATHS = [
     # macOS

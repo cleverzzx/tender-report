@@ -5,9 +5,8 @@ import logging
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 from urllib.parse import urljoin
 
 import requests
@@ -15,7 +14,7 @@ from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
 
 from config import LISTING_URLS, OFFICIAL_URLS
-from src.models import ScrapedEntry, Tender, ValidationResult
+from src.models import ScrapedEntry, ValidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +43,7 @@ KNOWN_SSL_ISSUES = {
 
 class RetryableError(Exception):
     """可重试的错误"""
+
     pass
 
 
@@ -57,6 +57,7 @@ def retry_on_failure(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY)
     Returns:
         装饰器函数
     """
+
     def decorator(func: Callable) -> Callable:
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             last_exception = None
@@ -66,8 +67,11 @@ def retry_on_failure(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY)
                 except RetryableError as e:
                     last_exception = e
                     if attempt < max_retries:
-                        wait_time = delay * (2 ** attempt)  # 指数退避
-                        logger.warning(f"{func.__name__} 失败，{wait_time}s 后重试 ({attempt + 1}/{max_retries}): {e}")
+                        wait_time = delay * (2**attempt)  # 指数退避
+                        logger.warning(
+                            f"{func.__name__} 失败，{wait_time}s 后重试 "
+                            f"({attempt + 1}/{max_retries}): {e}"
+                        )
                         time.sleep(wait_time)
                     else:
                         raise
@@ -76,7 +80,9 @@ def retry_on_failure(max_retries: int = MAX_RETRIES, delay: float = RETRY_DELAY)
             if last_exception:
                 raise last_exception
             return None
+
         return wrapper
+
     return decorator
 
 
@@ -109,16 +115,22 @@ def _try_request(url: str, timeout: int, verify: bool) -> Tuple[bool, Optional[i
     try:
         # 先尝试 HEAD 请求
         resp = requests.head(
-            url, timeout=timeout, headers=HEADERS,
-            allow_redirects=True, verify=verify,
+            url,
+            timeout=timeout,
+            headers=HEADERS,
+            allow_redirects=True,
+            verify=verify,
         )
         if resp.status_code < 400:
             return True, resp.status_code, None
 
         # HEAD 失败，降级到 GET
         resp = requests.get(
-            url, timeout=timeout, headers=HEADERS,
-            stream=True, verify=verify,
+            url,
+            timeout=timeout,
+            headers=HEADERS,
+            stream=True,
+            verify=verify,
         )
         resp.close()
         return resp.status_code < 400, resp.status_code, None
@@ -148,18 +160,17 @@ def validate_url(url: str, timeout: int = REQUEST_TIMEOUT) -> ValidationResult:
     # SSL 错误降级：跳过证书验证重试
     if err and ("SSL" in err or "certificate" in err):
         import urllib3
+
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
         ok2, code2, err2 = _try_request(url, timeout, verify=False)
         if ok2:
             logger.warning(f"SSL 证书不可信但站点可访问: {url[:80]}")
             return ValidationResult(
-                url=url, ok=True, status_code=code2,
-                error="SSL证书不受信任(已跳过验证)"
+                url=url, ok=True, status_code=code2, error="SSL证书不受信任(已跳过验证)"
             )
         return ValidationResult(
-            url=url, ok=False, status_code=None,
-            error=f"{err} | 跳过SSL后: {err2}"
+            url=url, ok=False, status_code=None, error=f"{err} | 跳过SSL后: {err2}"
         )
 
     return ValidationResult(url=url, ok=False, status_code=code, error=err)
@@ -227,6 +238,7 @@ def print_validation_report(results: Dict[str, Dict[str, ValidationResult]]) -> 
 
 # ============== 页面抓取 ==============
 
+
 def _fetch_soup(url: str, timeout: int = REQUEST_TIMEOUT) -> Optional[BeautifulSoup]:
     """抓取页面返回 BeautifulSoup。
 
@@ -251,6 +263,7 @@ def _fetch_soup(url: str, timeout: int = REQUEST_TIMEOUT) -> Optional[BeautifulS
         except requests.exceptions.SSLError:
             if verify:
                 import urllib3
+
                 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
                 continue
             logger.warning(f"SSL 错误且跳过验证后仍失败: {url}")
@@ -286,6 +299,7 @@ def _normalize_url(href: str, base_url: str) -> str:
 
 # ============== 列表页爬取 ==============
 
+
 def _scrape_table_rows(soup: BeautifulSoup, base_url: str) -> List[ScrapedEntry]:
     """策略1：从 HTML 表格提取标讯条目。
 
@@ -306,11 +320,14 @@ def _scrape_table_rows(soup: BeautifulSoup, base_url: str) -> List[ScrapedEntry]
             if len(cols) < 2:
                 continue
             link = row.find("a", href=True)
-            entries.append(ScrapedEntry(
-                title=cols[-1].get_text(" ", strip=True),
-                url=_normalize_url(link["href"], base_url) if link else "",
-                date_text=cols[0].get_text(strip=True) if cols else "",
-            ))
+            href = cast(str, link["href"]) if link else ""
+            entries.append(
+                ScrapedEntry(
+                    title=cols[-1].get_text(" ", strip=True),
+                    url=_normalize_url(href, base_url),
+                    date_text=cols[0].get_text(strip=True) if cols else "",
+                )
+            )
     return entries
 
 
@@ -327,7 +344,7 @@ def _scrape_link_lists(soup: BeautifulSoup, base_url: str) -> List[ScrapedEntry]
     entries: List[ScrapedEntry] = []
     seen: set = set()
     for tag in soup.find_all(["a"], href=True):
-        href = tag["href"]
+        href = cast(str, tag["href"])
         if not href or href == "#":
             continue
         text = tag.get_text(" ", strip=True)
@@ -359,15 +376,24 @@ def _scrape_cards(soup: BeautifulSoup, base_url: str) -> List[ScrapedEntry]:
     seen: set = set()
     card_classes = ["tender", "notice", "card", "post", "article", "item", "entry", "listing"]
     for tag in soup.find_all(["div", "article", "li", "section"]):
-        cls = " ".join(tag.get("class", [])).lower()
+        class_attr = tag.get("class")
+        if isinstance(class_attr, list):
+            cls = " ".join(str(c) for c in class_attr).lower()
+        elif class_attr is None:
+            cls = ""
+        else:
+            cls = str(class_attr).lower()
         if not any(c in cls for c in card_classes):
             continue
         link = tag.find("a", href=True)
+        href = cast(str, link["href"]) if link else ""
         title_el = tag.find(["h2", "h3", "h4", "strong", "b"])
-        title = title_el.get_text(" ", strip=True) if title_el else tag.get_text(" ", strip=True)[:200]
+        title = (
+            title_el.get_text(" ", strip=True) if title_el else tag.get_text(" ", strip=True)[:200]
+        )
         if not title or len(title) < 10:
             continue
-        url = _normalize_url(link["href"], base_url) if link else ""
+        url = _normalize_url(href, base_url)
         if url in seen:
             continue
         seen.add(url)
@@ -441,6 +467,7 @@ def scrape_all_listings(max_workers: int = 3) -> Dict[str, List[ScrapedEntry]]:
 
 # ============== 详情页数据提取 ==============
 
+
 def _parse_date(text: str) -> Optional[datetime]:
     """尝试从文本提取日期。
 
@@ -457,7 +484,9 @@ def _parse_date(text: str) -> Optional[datetime]:
 
     # 先尝试 dateutil 的智能解析
     try:
-        return date_parser.parse(text, fuzzy=True)
+        parsed = date_parser.parse(text, fuzzy=True)
+        if isinstance(parsed, datetime):
+            return parsed
     except (ValueError, TypeError):
         pass
 
@@ -465,8 +494,14 @@ def _parse_date(text: str) -> Optional[datetime]:
     patterns = [
         (r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})", "%Y-%m-%d"),
         (r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", "%m-%d-%Y"),
-        (r"(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[,\s]+(\d{4})", "%d %b %Y"),
-        (r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s+(\d{4})", "%b %d %Y"),
+        (
+            r"(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[,\s]+(\d{4})",
+            "%d %b %Y",
+        ),
+        (
+            r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s+(\d{4})",
+            "%b %d %Y",
+        ),
     ]
 
     for pattern, fmt in patterns:
@@ -480,7 +515,9 @@ def _parse_date(text: str) -> Optional[datetime]:
                     elif fmt.startswith("%b"):
                         return datetime.strptime(f"{groups[0]} {groups[1]} {groups[2]}", fmt)
                     else:
-                        return datetime.strptime(f"{groups[0]}-{int(groups[1]):02d}-{int(groups[2]):02d}", "%Y-%m-%d")
+                        return datetime.strptime(
+                            f"{groups[0]}-{int(groups[1]):02d}-{int(groups[2]):02d}", "%Y-%m-%d"
+                        )
             except ValueError:
                 continue
 
@@ -528,7 +565,14 @@ def scrape_detail_page(url: str) -> Optional[Dict[str, Any]]:
 
     # 日期提取
     all_text = soup.get_text(" ", strip=True)
-    date_fields = ["Publish Date", "Published Date", "发布日期", "Closing Date", "截止日期", "Deadline"]
+    date_fields = [
+        "Publish Date",
+        "Published Date",
+        "发布日期",
+        "Closing Date",
+        "截止日期",
+        "Deadline",
+    ]
     for f in date_fields:
         if f in fields:
             dt = _parse_date(fields[f])

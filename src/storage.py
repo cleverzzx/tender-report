@@ -4,12 +4,11 @@
 import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.models import DetectionStats, HistoryEntry, Tender, TenderField
+from src.models import DetectionStats, Tender
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +59,8 @@ class HistoryManager:
 
         try:
             with open(self.history_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data: Dict[str, Any] = json.load(f)
+                return data
         except (json.JSONDecodeError, IOError) as e:
             logger.warning(f"历史文件读取失败: {e}，使用空历史")
             return {"version": 1, "last_run": None, "tenders": {}}
@@ -165,7 +165,9 @@ class HistoryManager:
 _history_manager = HistoryManager()
 
 
-def detect_new_tenders(current_tenders: Dict[str, List[Tender]]) -> Tuple[Dict[str, List[Tender]], int, DetectionStats]:
+def detect_new_tenders(
+    current_tenders: Dict[str, List[Tender]],
+) -> Tuple[Dict[str, List[Tender]], int, DetectionStats]:
     """检测新增标讯（兼容旧版 API）"""
     return _history_manager.detect_new_tenders(current_tenders)
 

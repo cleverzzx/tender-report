@@ -8,7 +8,6 @@ from datetime import datetime
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from pathlib import Path
 from typing import Optional, Tuple
 
 from config import CONFIG
@@ -35,12 +34,14 @@ class EmailSender:
 
     def is_configured(self) -> bool:
         """检查邮件配置是否完整。"""
-        return all([
-            self.smtp_server,
-            self.sender,
-            self.password,
-            self.recipient,
-        ])
+        return all(
+            [
+                self.smtp_server,
+                self.sender,
+                self.password,
+                self.recipient,
+            ]
+        )
 
     def get_config_error(self) -> Optional[str]:
         """获取配置错误信息。"""
@@ -106,7 +107,8 @@ class EmailSender:
             with open(file_path, "rb") as f:
                 attachment = MIMEApplication(f.read(), _subtype="pdf")
                 attachment.add_header(
-                    "Content-Disposition", "attachment",
+                    "Content-Disposition",
+                    "attachment",
                     filename=os.path.basename(file_path),
                 )
                 msg.attach(attachment)
@@ -118,7 +120,7 @@ class EmailSender:
                 server.send_message(msg)
 
             logger.info(f"邮件发送成功: {file_path}")
-            print(f"      ✓ 邮件发送成功")
+            print("      ✓ 邮件发送成功")
             return True, None
 
         except smtplib.SMTPAuthenticationError:

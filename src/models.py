@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -49,7 +49,11 @@ class Tender:
         """从字典创建 Tender 对象"""
         fields_data = data.get("fields", [])
         fields = [
-            TenderField(name=f[0], value=f[1]) if isinstance(f, (list, tuple)) else TenderField(name=f.get("name", ""), value=f.get("value", ""))
+            (
+                TenderField(name=f[0], value=f[1])
+                if isinstance(f, (list, tuple))
+                else TenderField(name=f.get("name", ""), value=f.get("value", ""))
+            )
             for f in fields_data
         ]
         return cls(
