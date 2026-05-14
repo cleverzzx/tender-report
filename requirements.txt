@@ -1,0 +1,15 @@
+# 孟加拉标讯报告生成工具 - 生产依赖
+# 安装: pip install -r requirements.txt
+
+# PDF生成
+reportlab>=4.0.0
+
+# HTTP请求
+requests>=2.31.0
+
+# HTML解析
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# 日期解析
+python-dateutil>=2.8.0

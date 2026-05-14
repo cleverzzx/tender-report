@@ -1,0 +1,18 @@
+# 孟加拉标讯报告生成工具 - 开发依赖
+# 安装: pip install -r requirements-dev.txt
+
+# 测试框架
+pytest>=7.0.0
+pytest-cov>=4.0.0
+responses>=0.23.0
+freezegun>=1.0.0
+
+# 代码质量
+black>=23.0.0
+isort>=5.12.0
+flake8>=6.0.0
+mypy>=1.0.0
+pydocstyle>=6.0.0
+
+# 类型 stubs（用于 mypy）
+types-requests>=2.31.0
