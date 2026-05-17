@@ -13,7 +13,7 @@ import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
 
-from config import LISTING_URLS, OFFICIAL_URLS
+from src.urls import LISTING_URLS, OFFICIAL_URLS
 from src.models import ScrapedEntry, ValidationResult
 
 logger = logging.getLogger(__name__)
@@ -416,6 +416,13 @@ def scrape_listing(source_name: str, url: str) -> List[ScrapedEntry]:
     if not soup:
         return []
 
+    # 来源→公司推断
+    SOURCE_COMPANY_HINT = {
+        "BAPEX": "BAPEX",
+        "SGFL": "SGFL",
+        "BGFCL_portal": "BGFCL",
+    }
+
     for strategy, name in [
         (_scrape_table_rows, "表格"),
         (_scrape_link_lists, "链接列表"),
@@ -423,6 +430,11 @@ def scrape_listing(source_name: str, url: str) -> List[ScrapedEntry]:
     ]:
         entries = strategy(soup, url)
         if entries:
+            # 标注来源公司
+            hint = SOURCE_COMPANY_HINT.get(source_name)
+            for entry in entries:
+                if hint and not entry.company:
+                    entry.company = hint
             logger.info(f"  {source_name}: 通过「{name}」策略找到 {len(entries)} 条标讯")
             return entries
 

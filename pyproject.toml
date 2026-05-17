@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tender-report"
-version = "3.1.0"
+version = "3.2.0"
 description = "孟加拉石油公司国际招标标讯追踪工具"
 readme = "README.md"
 requires-python = ">=3.10"

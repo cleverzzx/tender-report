@@ -25,7 +25,10 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-from config import CONFIG, get_fallback_tenders, get_industry_news, OFFICIAL_URLS
+from config import CONFIG
+from src.fallback import get_fallback_tenders
+from src.industry_news import get_industry_news
+from src.urls import OFFICIAL_URLS
 from scraper import validate_all_links, print_validation_report, scrape_all_listings
 from storage import detect_new_tenders, get_last_run_time
 

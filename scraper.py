@@ -11,7 +11,7 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 
-from config import OFFICIAL_URLS, LISTING_URLS
+from src.urls import LISTING_URLS, OFFICIAL_URLS
 
 logger = logging.getLogger(__name__)
 

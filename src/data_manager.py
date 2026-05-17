@@ -5,7 +5,7 @@ import difflib
 import logging
 from typing import Dict, List, Optional, Tuple
 
-from config import get_fallback_tenders
+from src.fallback import get_fallback_tenders
 from src.models import DetectionStats, ScrapedEntry, Tender, TenderField
 from src.scraper import scrape_all_listings
 from src.storage import detect_new_tenders
@@ -56,35 +56,53 @@ def _normalize_scraped_entry(entry: ScrapedEntry, company: Optional[str] = None)
 def _merge_tenders(
     fallback_tenders: Dict[str, List[Tender]],
     scraped_listings: Dict[str, List[ScrapedEntry]],
-    similarity_threshold: float = 0.75,
+    similarity_threshold: float = 0.70,
 ) -> Dict[str, List[Tender]]:
     """合并 fallback 数据和爬取数据，去重并标记来源。
 
     去重策略：
-    - 以标题相似度为主要判断依据
-    - 如果爬取的标题与 fallback 中某条标题相似度>threshold，认为是同一条
+    - URL 完全相同 → 直接视为重复
+    - 标题相似度 > threshold → 视为同一条
+    - 多来源（如 Petrobangla）自动按标题推断公司归属
 
     Args:
         fallback_tenders: fallback 标讯数据
-        scraped_listings: 爬取到的标讯列表
-        similarity_threshold: 相似度阈值（默认 0.75）
+        scraped_listings: 爬取到的标讯列表（key 为来源名，如 BAPEX / Petrobangla / SGFL / BGFCL_portal）
+        similarity_threshold: 相似度阈值（默认 0.70）
 
     Returns:
         合并后的标讯字典
     """
-    merged: Dict[str, List[Tender]] = {}
+    # 来源 → 公司映射：Petrobangla 是汇总站，条目需按标题推断公司
+    SOURCE_TO_COMPANY: Dict[str, Optional[str]] = {
+        "BAPEX": "BAPEX",
+        "BGFCL_portal": "BGFCL",
+        "SGFL": "SGFL",
+        "Petrobangla": None,  # 需要推断
+    }
 
+    merged: Dict[str, List[Tender]] = {}
+    # 先收集每个公司的 fallback + scraped
     for company in ["BAPEX", "BGFCL", "SGFL"]:
         company_tenders = fallback_tenders.get(company, []).copy()
-        company_scraped = scraped_listings.get(company, [])
+        existing_urls = {t._url for t in company_tenders if t._url}
+        existing_titles = [t.title.lower() for t in company_tenders]
 
-        # 如果没有爬取到数据，直接使用 fallback
+        # 收集属于该公司的爬取条目
+        company_scraped: List[ScrapedEntry] = []
+        for source_name, entries in scraped_listings.items():
+            target = SOURCE_TO_COMPANY.get(source_name)
+            if target == company:
+                company_scraped.extend(entries)
+            elif target is None:  # Petrobangla — 按标题+URL 推断
+                for entry in entries:
+                    inferred = _infer_company_from_entry(entry)
+                    if inferred == company:
+                        company_scraped.append(entry)
+
         if not company_scraped:
             merged[company] = company_tenders
             continue
-
-        # 获取已存在的标题列表用于去重
-        existing_titles = [t.title.lower() for t in company_tenders]
 
         added_count = 0
         for entry in company_scraped:
@@ -92,7 +110,11 @@ def _merge_tenders(
             if not entry_title or len(entry_title) < 10:
                 continue
 
-            # 检查是否与现有标题相似
+            # URL 去重
+            if entry.url and entry.url in existing_urls:
+                continue
+
+            # 标题相似度去重
             is_duplicate = False
             for existing in existing_titles:
                 similarity = difflib.SequenceMatcher(None, entry_title, existing).ratio()
@@ -103,6 +125,9 @@ def _merge_tenders(
             if not is_duplicate:
                 normalized = _normalize_scraped_entry(entry, company)
                 company_tenders.append(normalized)
+                existing_titles.append(entry_title)
+                if entry.url:
+                    existing_urls.add(entry.url)
                 added_count += 1
 
         merged[company] = company_tenders
@@ -111,6 +136,44 @@ def _merge_tenders(
             logger.info(f"{company}: 新增 {added_count} 条爬取标讯")
 
     return merged
+
+
+def _infer_company_from_title(title: str, url: str = "") -> Optional[str]:
+    """从标讯标题推断所属公司。
+
+    Args:
+        title: 标讯标题
+        url: 标讯 URL（辅助推断）
+
+    Returns:
+        公司名或 None
+    """
+    title_lower = title.lower()
+    url_lower = url.lower()
+
+    # URL 辅助推断（优先级最高 — URL 域名是最可靠的）
+    if "sgfl.gov.bd" in url_lower or "office-sgfl" in url_lower:
+        return "SGFL"
+    if "bapex.com.bd" in url_lower or "office-bapex" in url_lower:
+        return "BAPEX"
+    if "bgfcl" in url_lower:
+        return "BGFCL"
+
+    # 标题关键词推断
+    if "sgfl" in title_lower or "sylhet" in title_lower:
+        return "SGFL"
+    if "bapex" in title_lower:
+        return "BAPEX"
+    if "bgfcl" in title_lower:
+        return "BGFCL"
+
+    # 无法推断
+    return None
+
+
+def _infer_company_from_entry(entry: ScrapedEntry) -> Optional[str]:
+    """从爬取条目推断所属公司（综合标题 + URL）。"""
+    return _infer_company_from_title(entry.title, entry.url or "")
 
 
 def _sort_by_publish_date(tenders: Dict[str, List[Tender]]) -> Dict[str, List[Tender]]:

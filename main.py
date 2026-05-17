@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 孟加拉石油公司国际招标标讯报告生成工具
-版本: v3.1 (2026-05-14)
+版本: v3.2 (2026-05-17)
 功能: 自动爬取Petrobangla/BAPEX/SGFL/BGFCL官方网站标讯，生成标准格式PDF报告
 """
 
 import logging
 from datetime import datetime
 
-from config import OFFICIAL_URLS
+from src.urls import OFFICIAL_URLS
 from src.cli import parse_args
 from src.data_manager import get_tender_data
 from src.email_sender import EmailSender

@@ -257,10 +257,10 @@ class PDFGenerator:
             story: PDF 故事板列表
             validation_date: 校验日期
         """
-        from config import get_industry_news
+        from src.news_fetcher import get_industry_news_html
 
         story.append(Paragraph("五、行业动态与市场观察", self.styles["section"]))
-        story.append(Paragraph(get_industry_news(validation_date), self.styles["summary"]))
+        story.append(Paragraph(get_industry_news_html(validation_date), self.styles["summary"]))
         story.append(Spacer(1, 24))
 
     def _render_footer(self, story: List, now: datetime) -> None:
