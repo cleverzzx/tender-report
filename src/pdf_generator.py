@@ -40,18 +40,18 @@ class PDFGenerator:
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
     ]
 
-    # 公司章节配置
+    # 公司章节配置（编号前缀在渲染时动态添加）
     COMPANY_SECTIONS: List[Tuple[str, str]] = [
         (
-            "二、Bangladesh Petroleum Exploration & Production Company Limited (BAPEX) 国际招标",
+            "Bangladesh Petroleum Exploration & Production Company Limited (BAPEX) 国际招标",
             "BAPEX",
         ),
         (
-            "三、Bangladesh Gas Fields Company Limited (BGFCL) 国际招标",
+            "Bangladesh Gas Fields Company Limited (BGFCL) 国际招标",
             "BGFCL",
         ),
         (
-            "四、Sylhet Gas Fields Limited (SGFL) 国际招标",
+            "Sylhet Gas Fields Limited (SGFL) 国际招标",
             "SGFL",
         ),
     ]
@@ -202,24 +202,29 @@ class PDFGenerator:
         story.append(t)
 
     def _render_company_section(
-        self, story: List, section_title: str, tender_list: List[Tender]
-    ) -> None:
+        self, story: List, section_title: str, tender_list: List[Tender], start_index: int = 0
+    ) -> int:
         """渲染一个公司的全部标讯。
 
         Args:
             story: PDF 故事板列表
             section_title: 章节标题
             tender_list: 标讯列表
+            start_index: 全局起始序号
+
+        Returns:
+            渲染后的下一个全局序号
         """
         if not tender_list:
-            return
+            return start_index
 
         story.append(Paragraph(section_title, self.styles["section"]))
         for i, tender in enumerate(tender_list):
-            self._render_tender(story, tender, i)
+            self._render_tender(story, tender, start_index + i)
             if i < len(tender_list) - 1:
                 story.append(Spacer(1, 18))
         story.append(Spacer(1, 15))
+        return start_index + len(tender_list)
 
     def _render_summary(
         self, story: List, tenders: Dict[str, List[Tender]], validation_date: datetime
@@ -234,32 +239,39 @@ class PDFGenerator:
         story.append(Paragraph("一、标讯汇总", self.styles["section"]))
 
         total = sum(len(v) for v in tenders.values())
-        bapex_count = len(tenders.get("BAPEX", []))
-        bgfcl_count = len(tenders.get("BGFCL", []))
-        sgfl_count = len(tenders.get("SGFL", []))
+
+        # 只显示有标讯的公司，按章节顺序
+        company_lines = []
+        for _, company_key in self.COMPANY_SECTIONS:
+            count = len(tenders.get(company_key, []))
+            if count > 0:
+                company_lines.append(f"• <b>{company_key}</b>: {count} 条国际招标")
+
+        company_summary = "<br/>".join(company_lines) if company_lines else "暂无有效国际招标"
 
         summary_text = (
             f"本报告共找到 <b>{total} 条</b> 有效国际招标（International Tender），"
             f"按发布日期倒序排列（最新发布在前）。其中：<br/><br/>"
-            f"• <b>BAPEX</b>: {bapex_count} 条国际招标<br/>"
-            f"• <b>SGFL</b>: {sgfl_count} 条国际招标<br/>"
-            f"• <b>BGFCL</b>: {bgfcl_count} 条国际招标<br/><br/>"
+            f"{company_summary}<br/><br/>"
             f"重点关注领域：2000HP钻井交钥匙工程、发电机备件、锅炉火管、软启动器/变频器、卡特彼勒发电机备件。<br/>"
             f"<i>所有官方来源链接和PDF下载地址均已校验通过，可直接点击访问。</i>"
         )
         story.append(Paragraph(summary_text, self.styles["summary"]))
         story.append(Spacer(1, 15))
 
-    def _render_industry_news(self, story: List, validation_date: datetime) -> None:
+    def _render_industry_news(self, story: List, validation_date: datetime, section_num: int = 5) -> None:
         """渲染行业动态。
 
         Args:
             story: PDF 故事板列表
             validation_date: 校验日期
+            section_num: 章节序号（默认5）
         """
         from src.news_fetcher import get_industry_news_html
 
-        story.append(Paragraph("五、行业动态与市场观察", self.styles["section"]))
+        chinese_nums = {2: "二", 3: "三", 4: "四", 5: "五", 6: "六"}
+        num_prefix = chinese_nums.get(section_num, str(section_num))
+        story.append(Paragraph(f"{num_prefix}、行业动态与市场观察", self.styles["section"]))
         story.append(Paragraph(get_industry_news_html(validation_date), self.styles["summary"]))
         story.append(Spacer(1, 24))
 
@@ -346,13 +358,22 @@ class PDFGenerator:
         # 汇总信息
         self._render_summary(story, tenders, validation_date)
 
-        # 各公司标讯
+        # 各公司标讯（动态章节编号 + 全局连续序号）
+        chinese_nums = ["二", "三", "四"]
+        section_idx = 0
+        global_index = 0
         for section_title, company_key in self.COMPANY_SECTIONS:
             tender_list = tenders.get(company_key, [])
-            self._render_company_section(story, section_title, tender_list)
+            if tender_list:
+                num_prefix = chinese_nums[section_idx]
+                full_title = f"{num_prefix}、{section_title}"
+                global_index = self._render_company_section(
+                    story, full_title, tender_list, global_index
+                )
+                section_idx += 1
 
-        # 行业动态
-        self._render_industry_news(story, validation_date)
+        # 行业动态（编号紧跟公司章节之后）
+        self._render_industry_news(story, validation_date, section_num=section_idx + 2)
 
         # 页脚
         self._render_footer(story, now)

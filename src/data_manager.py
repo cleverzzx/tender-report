@@ -76,18 +76,44 @@ def _is_tender_expired(tender: Tender, now: Optional[datetime] = None) -> bool:
     deadline_fields = ["截止日期", "投标截止日期", "Deadline", "Closing Date", "deadline"]
 
     for field in tender.fields:
-        # 检查 _deadline_dt 属性（从 PDF 解析设置的）
-        if hasattr(field, "_deadline_dt") and field._deadline_dt:
-            return field._deadline_dt < now
-
         if field.name in deadline_fields:
             # 尝试解析日期
             try:
                 from dateutil import parser as date_parser
 
-                parsed = date_parser.parse(field.value, fuzzy=True)
-                if isinstance(parsed, datetime):
+                # 清理日期字符串（移除时区缩写如 BST）
+                date_str = field.value.strip()
+                # 移除常见时区缩写，保留日期时间部分
+                import re
+
+                # 先尝试提取 ISO 格式日期 (2026-05-18T11:30:00)
+                iso_match = re.search(r'(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}(?::\d{2})?)', date_str)
+                if iso_match:
+                    date_part = iso_match.group(1)
+                    time_part = iso_match.group(2)
+                    parsed = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M")
                     return parsed < now
+
+                # 提取日期部分（忽略时区如 BST）
+                date_match = re.search(
+                    r'(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2}(?::\d{2})?)',
+                    date_str
+                )
+                if date_match:
+                    date_part = date_match.group(1)
+                    time_part = date_match.group(2)
+                    if len(time_part.split(':')) == 2:
+                        parsed = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M")
+                    else:
+                        parsed = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M:%S")
+                    return parsed < now
+
+                # 回退到 dateutil 解析
+                parsed = date_parser.parse(date_str, fuzzy=True)
+                if isinstance(parsed, datetime):
+                    # 忽略时区信息，只比较本地时间
+                    parsed_naive = parsed.replace(tzinfo=None)
+                    return parsed_naive < now
             except (ValueError, TypeError):
                 pass
 

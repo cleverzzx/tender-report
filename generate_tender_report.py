@@ -199,6 +199,79 @@ def _get_publish_date(tender):
     return datetime.min
 
 
+def _is_tender_expired_dict(tender, now=None):
+    """判断字典格式的标讯是否已过期。"""
+    if now is None:
+        now = datetime.now()
+
+    deadline_fields = {"截止日期", "投标截止日期", "Deadline", "Closing Date", "deadline"}
+    import re
+
+    for field_name, field_value in tender.get("fields", []):
+        if field_name in deadline_fields:
+            # 尝试提取 ISO 格式日期
+            iso_match = re.search(
+                r'(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}(?::\d{2})?)',
+                field_value,
+            )
+            if iso_match:
+                date_part = iso_match.group(1)
+                time_part = iso_match.group(2)
+                try:
+                    parsed = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M")
+                    return parsed < now
+                except ValueError:
+                    pass
+
+            # 提取日期+时间部分（忽略时区如 BST）
+            date_match = re.search(
+                r'(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2}(?::\d{2})?)',
+                field_value,
+            )
+            if date_match:
+                date_part = date_match.group(1)
+                time_part = date_match.group(2)
+                fmt = "%Y-%m-%d %H:%M" if len(time_part.split(":")) == 2 else "%Y-%m-%d %H:%M:%S"
+                try:
+                    parsed = datetime.strptime(f"{date_part} {time_part}", fmt)
+                    return parsed < now
+                except ValueError:
+                    pass
+
+            # 回退到 dateutil 解析
+            try:
+                from dateutil import parser as date_parser
+
+                parsed = date_parser.parse(field_value, fuzzy=True)
+                if isinstance(parsed, datetime):
+                    parsed_naive = parsed.replace(tzinfo=None)
+                    return parsed_naive < now
+            except (ValueError, TypeError):
+                pass
+
+    return False
+
+
+def _filter_tenders_dict(tenders, now=None):
+    """过滤字典格式的标讯：移除过期标讯。"""
+    if now is None:
+        now = datetime.now()
+
+    filtered = {}
+    for company, tlist in tenders.items():
+        kept = []
+        expired_count = 0
+        for t in tlist:
+            if _is_tender_expired_dict(t, now):
+                expired_count += 1
+                continue
+            kept.append(t)
+        if expired_count > 0:
+            print(f"      - {company}: 过滤 {expired_count} 条过期标讯")
+        filtered[company] = kept
+    return filtered
+
+
 def _normalize_scraped_entry(entry, company):
     """将爬取的原始条目转换为标准标讯格式。"""
     title = entry.get("title", "")
@@ -301,6 +374,9 @@ def get_tender_data(try_scrape=False):
         except Exception as e:
             print(f"      ! 爬取失败: {e}，使用回退数据")
 
+    # 过滤过期标讯
+    merged_tenders = _filter_tenders_dict(merged_tenders)
+
     # 检测新标讯并保存历史
     merged_tenders, new_count, stats = detect_new_tenders(merged_tenders)
 
@@ -329,15 +405,15 @@ TABLE_STYLE_CMDS = [
 
 COMPANY_SECTIONS = [
     (
-        "二、Bangladesh Petroleum Exploration & Production Company Limited (BAPEX) 国际招标",
+        "Bangladesh Petroleum Exploration & Production Company Limited (BAPEX) 国际招标",
         "BAPEX",
     ),
     (
-        "三、Bangladesh Gas Fields Company Limited (BGFCL) 国际招标",
+        "Bangladesh Gas Fields Company Limited (BGFCL) 国际招标",
         "BGFCL",
     ),
     (
-        "四、Sylhet Gas Fields Limited (SGFL) 国际招标",
+        "Sylhet Gas Fields Limited (SGFL) 国际招标",
         "SGFL",
     ),
 ]
@@ -367,14 +443,25 @@ def _render_tender(story, tender, index, styles):
     story.append(t)
 
 
-def _render_company_section(story, section_title, tender_list, styles):
-    """渲染一个公司的全部标讯。"""
+def _render_company_section(story, section_title, tender_list, styles, start_index=0):
+    """渲染一个公司的全部标讯。
+
+    Args:
+        start_index: 全局起始序号
+
+    Returns:
+        渲染后的下一个全局序号
+    """
+    if not tender_list:
+        return start_index
+
     story.append(Paragraph(section_title, styles["section"]))
     for i, tender in enumerate(tender_list):
-        _render_tender(story, tender, i, styles)
+        _render_tender(story, tender, start_index + i, styles)
         if i < len(tender_list) - 1:
             story.append(Spacer(1, 18))
     story.append(Spacer(1, 15))
+    return start_index + len(tender_list)
 
 
 def _get_font():
@@ -425,26 +512,40 @@ def generate_pdf(tenders=None, output_filename=None, output_dir=None):
     # 汇总信息
     story.append(Paragraph("一、标讯汇总", styles["section"]))
     total = sum(len(v) for v in tenders.values())
+
+    # 只显示有标讯的公司
+    company_lines = []
+    for _, company_key in COMPANY_SECTIONS:
+        count = len(tenders.get(company_key, []))
+        if count > 0:
+            company_lines.append(f"• <b>{company_key}</b>: {count} 条国际招标")
+    company_summary = "<br/>".join(company_lines) if company_lines else "暂无有效国际招标"
+
     summary_text = (
         f"本报告共找到 <b>{total} 条</b> 有效国际招标（International Tender），"
         f"按发布日期倒序排列（最新发布在前）。其中：<br/><br/>"
-        f"• <b>BAPEX</b>: {len(tenders.get('BAPEX', []))} 条国际招标<br/>"
-        f"• <b>SGFL</b>: {len(tenders.get('SGFL', []))} 条国际招标<br/>"
-        f"• <b>BGFCL</b>: {len(tenders.get('BGFCL', []))} 条国际招标<br/><br/>"
+        f"{company_summary}<br/><br/>"
         f"重点关注领域：2000HP钻井交钥匙工程、发电机备件、锅炉火管、软启动器/变频器、卡特彼勒发电机备件。<br/>"
         f"<i>所有官方来源链接和PDF下载地址均已校验通过，可直接点击访问。</i>"
     )
     story.append(Paragraph(summary_text, styles["summary"]))
     story.append(Spacer(1, 15))
 
-    # 各公司标讯（DRY 循环替代了原来三段重复代码）
+    # 各公司标讯（动态章节编号 + 全局连续序号）
+    chinese_nums = ["二", "三", "四"]
+    section_idx = 0
+    global_index = 0
     for section_title, company_key in COMPANY_SECTIONS:
         tender_list = tenders.get(company_key, [])
         if tender_list:
-            _render_company_section(story, section_title, tender_list, styles)
+            num_prefix = chinese_nums[section_idx]
+            full_title = f"{num_prefix}、{section_title}"
+            global_index = _render_company_section(story, full_title, tender_list, styles, global_index)
+            section_idx += 1
 
-    # 行业动态
-    story.append(Paragraph("五、行业动态与市场观察", styles["section"]))
+    # 行业动态（编号紧跟公司章节之后）
+    news_prefix = ["二", "三", "四", "五", "六"][section_idx]
+    story.append(Paragraph(f"{news_prefix}、行业动态与市场观察", styles["section"]))
     story.append(Paragraph(get_industry_news(), styles["summary"]))
     story.append(Spacer(1, 24))
 
