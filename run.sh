@@ -1,16 +1,10 @@
 #!/bin/bash
-# 孟加拉石油标讯报告一键生成脚本
+# 孟加拉标讯报告 — 一键运行
+# 用法: ./run.sh                  # 生成PDF+发邮件
+#       ./run.sh --no-email       # 只生成PDF
+#       ./run.sh --scrape         # 爬取+生成
+#       ./run.sh --validate-only  # 仅校验链接
 
 cd "$(dirname "$0")"
-
-# 优先使用 .venv，回退到 venv
-if [ -d ".venv" ]; then
-    source .venv/bin/activate
-elif [ -d "venv" ]; then
-    source venv/bin/activate
-else
-    echo "错误: 未找到虚拟环境 (.venv 或 venv)"
-    exit 1
-fi
-
-python main.py
+source .venv/bin/activate
+exec python main.py --no-email "$@"

@@ -300,8 +300,33 @@ def _normalize_url(href: str, base_url: str) -> str:
 # ============== 列表页爬取 ==============
 
 
+# 孟加拉数字 → ASCII 数字映射
+_BENGALI_DIGITS = str.maketrans(
+    "০১২৩৪৫৬৭৮৯", "0123456789"
+)
+
+
+def _bengali_to_ascii(text: str) -> str:
+    """将孟加拉数字转换为 ASCII 数字。
+
+    Args:
+        text: 可能包含孟加拉数字的文本
+
+    Returns:
+        ASCII 数字文本
+    """
+    return text.translate(_BENGALI_DIGITS)
+
+
 def _scrape_table_rows(soup: BeautifulSoup, base_url: str) -> List[ScrapedEntry]:
     """策略1：从 HTML 表格提取标讯条目。
+
+    孟加拉政府门户模板列序：序号 | 标题 | 招标编号 | 类型 | 文件(PDF) | 日期 | 操作(详情页)
+    - Col1 (index 1): 标题
+    - Col3: 类型 (如 "আন্তর্জাতিক NOA" = International NOA)
+    - Col4: PDF 文件链接（不取这个）
+    - Col5: 发布日期（孟加拉数字）
+    - Col6: 详情页链接（"দেখুন" 按钮）
 
     Args:
         soup: BeautifulSoup 对象
@@ -317,15 +342,65 @@ def _scrape_table_rows(soup: BeautifulSoup, base_url: str) -> List[ScrapedEntry]
             continue
         for row in rows[1:]:
             cols = row.find_all(["td", "th"])
-            if len(cols) < 2:
+            if len(cols) < 5:
                 continue
-            link = row.find("a", href=True)
-            href = cast(str, link["href"]) if link else ""
+
+            # 标题：Col1（有时序号和标题合并，需容错）
+            title = cols[1].get_text(" ", strip=True)
+            title_col_idx = 1
+            # 第2列可能是序号（如"১"），真正的标题在 Col2
+            if title and _bengali_to_ascii(title).strip().isdigit():
+                if len(cols) > 2:
+                    title = cols[2].get_text(" ", strip=True)
+                    title_col_idx = 2
+
+            # 跳过空标题行
+            if not title or len(title) < 5:
+                continue
+
+            # 链接：取最后一列的 <a> 标签（Col6 的 "দেখুন" 详情页链接）
+            # 不用 row.find("a") 因为第一个 a 是 Col4 的 PDF 下载链接
+            all_links = row.find_all("a", href=True)
+            href = ""
+            if all_links:
+                href = cast(str, all_links[-1]["href"])  # 取最后一个链接 = 详情页
+
+            # 日期：Col5（孟加拉数字格式，如 "১৪-০৫-২০২৬" → "14-05-2026"）
+            date_text = ""
+            if len(cols) > 5:
+                raw_date = cols[5].get_text(strip=True)
+                date_text = _bengali_to_ascii(raw_date)
+
+            # 备用：如果 Col5 是空的，尝试其他列
+            if not date_text and len(cols) > 4:
+                raw_date = cols[4].get_text(strip=True)
+                date_text = _bengali_to_ascii(raw_date)
+
+            # 招标类型（Col3），用于标记 NOA
+            tender_type = ""
+            if len(cols) > 3:
+                tender_type = cols[3].get_text(strip=True)
+
+            # 招标编号（Col2）
+            tender_no = ""
+            if len(cols) > 2:
+                tender_no = cols[2].get_text(strip=True)
+
+            # PDF 链接（Col4 的第一个 <a> 标签）
+            pdf_url = ""
+            if len(cols) > 4:
+                pdf_link = cols[4].find("a", href=True)
+                if pdf_link:
+                    pdf_url = _normalize_url(cast(str, pdf_link["href"]), base_url)
+
             entries.append(
                 ScrapedEntry(
-                    title=cols[-1].get_text(" ", strip=True),
+                    title=title,
                     url=_normalize_url(href, base_url),
-                    date_text=cols[0].get_text(strip=True) if cols else "",
+                    date_text=date_text,
+                    tender_type=tender_type,
+                    tender_no=tender_no,
+                    pdf_url=pdf_url,
                 )
             )
     return entries
@@ -352,7 +427,7 @@ def _scrape_link_lists(soup: BeautifulSoup, base_url: str) -> List[ScrapedEntry]
             continue
         # 过滤明显非标讯链接
         lower = (text + href).lower()
-        if not any(kw in lower for kw in ["tender", "招标", "procurement", "notice", "bid"]):
+        if not any(kw in lower for kw in ["tender", "招标", "procurement", "notice", "bid", "noa"]):
             continue
         url = _normalize_url(href, base_url)
         if url in seen:
@@ -419,6 +494,7 @@ def scrape_listing(source_name: str, url: str) -> List[ScrapedEntry]:
     # 来源→公司推断
     SOURCE_COMPANY_HINT = {
         "BAPEX": "BAPEX",
+        "BAPEX_NOA": "BAPEX",
         "SGFL": "SGFL",
         "BGFCL_portal": "BGFCL",
     }
@@ -598,3 +674,212 @@ def scrape_detail_page(url: str) -> Optional[Dict[str, Any]]:
             data["parsed_first_date"] = dt.isoformat()
 
     return data
+
+
+# ============== PDF 解析 ==============
+
+
+def _download_pdf_bytes(pdf_url: str) -> Optional[bytes]:
+    """下载 PDF 文件内容。
+
+    Args:
+        pdf_url: PDF 文件 URL
+
+    Returns:
+        PDF 字节内容或 None
+    """
+    import urllib3
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    try:
+        resp = requests.get(pdf_url, headers=HEADERS, verify=False, timeout=45)
+        resp.raise_for_status()
+        return resp.content
+    except requests.RequestException as e:
+        logger.warning(f"PDF 下载失败 {pdf_url[:80]}: {e}")
+        return None
+
+
+def _is_scanned_pdf(pdf_bytes: bytes) -> bool:
+    """检测 PDF 是否为扫描件（无可提取文本）。
+
+    Args:
+        pdf_bytes: PDF 字节内容
+
+    Returns:
+        True 表示是扫描件
+    """
+    import io
+
+    try:
+        import fitz
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        total_text = ""
+        for page in doc:
+            total_text += page.get_text()
+        doc.close()
+        # 如果所有页面总文本 < 50 字符，判定为扫描件
+        return len(total_text.strip()) < 50
+    except Exception:
+        return True
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> Optional[str]:
+    """从 PDF 字节中提取全部文本。
+
+    Args:
+        pdf_bytes: PDF 字节内容
+
+    Returns:
+        提取的文本或 None
+    """
+    import io
+
+    try:
+        import fitz
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        texts = []
+        for page in doc:
+            texts.append(page.get_text())
+        doc.close()
+        return "\n".join(texts)
+    except Exception as e:
+        logger.warning(f"PDF 文本提取失败: {e}")
+        return None
+
+
+def _clean_pdf_text(text: str) -> str:
+    """清理 PDF 提取文本中的乱码字符。
+
+    孟加拉 PDF 文本常混有 Unicode 组合字符和 OCR 噪声。
+    清理后保留英文、数字、标点、空格和换行。
+
+    Args:
+        text: 原始 PDF 文本
+
+    Returns:
+        清理后的文本
+    """
+    import unicodedata
+
+    # 规范化 Unicode
+    text = unicodedata.normalize("NFKD", text)
+    # 保留可打印 ASCII + 换行
+    cleaned = []
+    for ch in text:
+        if ch == "\n" or ch == "\r":
+            cleaned.append("\n")
+        elif 32 <= ord(ch) <= 126:
+            cleaned.append(ch)
+        elif ord(ch) == 9:  # tab
+            cleaned.append(" ")
+    return "".join(cleaned)
+
+
+def _parse_money_amounts(text: str) -> Dict[str, str]:
+    """从 PDF 文本中提取货币金额。
+
+    识别模式：USD/BDT + 数字（孟加拉数字格式如 1,00,00,000.00）
+
+    Args:
+        text: 清理后的 PDF 文本
+
+    Returns:
+        {"USD": "63,622,027.00", "BDT": "131,00,00,000.00", ...}
+    """
+    amounts: Dict[str, str] = {}
+    # 孟加拉金额格式（lakh/crore）
+    money_pattern = re.compile(
+        r"(USD|BDT|US\s*Doll[ae]r|Bangladeshi\s*Taka)\s+"
+        r"([\d,]+\.?\d*)",
+        re.IGNORECASE,
+    )
+    for m in money_pattern.finditer(text):
+        currency = m.group(1).upper().strip()
+        value = m.group(2)
+        if "DOLLAR" in currency or "USD" in currency:
+            amounts["USD"] = value
+        elif "TAKA" in currency or "BDT" in currency:
+            amounts["BDT"] = value
+    return amounts
+
+
+def _parse_deadline(text: str) -> Optional[datetime]:
+    """从 PDF 文本中提取截止日期。
+
+    搜索 Closing Date / Deadline / Submission 附近日期。
+
+    Args:
+        text: 清理后的 PDF 文本
+
+    Returns:
+        datetime 或 None
+    """
+    patterns = [
+        # "Closing Date: 18 May 2026"
+        r"(?:Closing|Deadline|Submission)\s*Date[:\s]+(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
+        # "closing date: 18-05-2026"
+        r"(?:closing|deadline|submission)\s*date[:\s]+(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
+        # "not later than 18 May 2026"
+        r"not\s+later\s+than\s+(\d{1,2}\s+\w+\s+\d{4})",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            date_str = m.group(1)
+            dt = _parse_date(date_str)
+            if dt:
+                return dt
+    return None
+
+
+def parse_pdf_fields(pdf_url: str) -> Dict[str, Any]:
+    """解析单个 PDF 文件，提取关键字段。
+
+    Args:
+        pdf_url: PDF 文件 URL
+
+    Returns:
+        {"deadline": datetime, "usd_amount": str, "bdt_amount": str, "is_scanned": bool, ...}
+    """
+    result: Dict[str, Any] = {"pdf_url": pdf_url, "is_scanned": False, "error": None}
+
+    pdf_bytes = _download_pdf_bytes(pdf_url)
+    if not pdf_bytes:
+        result["error"] = "下载失败"
+        return result
+
+    if _is_scanned_pdf(pdf_bytes):
+        result["is_scanned"] = True
+        return result
+
+    raw_text = _extract_pdf_text(pdf_bytes)
+    if not raw_text:
+        result["error"] = "文本提取失败"
+        return result
+
+    cleaned = _clean_pdf_text(raw_text)
+    result["raw_text"] = cleaned[:5000]  # 保留前5000字符供调试
+
+    # 金额
+    amounts = _parse_money_amounts(cleaned)
+    result.update(amounts)
+
+    # 截止日期
+    deadline = _parse_deadline(cleaned)
+    if deadline:
+        result["deadline"] = deadline.isoformat()
+
+    # 招标编号
+    tn_pattern = re.search(
+        r"(?:Tender|TENDER)\s*(?:No|NO|Reference)[:\s#]*([A-Z0-9/()\-.]+(?:\s*dated[:\s]*[\d\-./]+)?)",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if tn_pattern:
+        result["tender_no_from_pdf"] = tn_pattern.group(1).strip()
+
+    return result

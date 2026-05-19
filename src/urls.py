@@ -76,6 +76,10 @@ OFFICIAL_URLS: Dict[str, Dict[str, str]] = {
 # ============== 爬取目标 —— 标讯列表页 ==============
 LISTING_URLS: Dict[str, str] = {
     "BAPEX": "https://bapex.com.bd/pages/tenders",
+    "BAPEX_NOA": (
+        "https://bapex.com.bd/pages/tenders?page=1&page_size=10"
+        "&filters=%7B%22tender_type%22%3A%22698410aace3a8b7841c7c4b1%22%7D"
+    ),
     "Petrobangla": "https://petrobangla.org.bd/pages/tenders",
     "SGFL": "https://sgfl.gov.bd/pages/tenders",
     "BGFCL_portal": "https://bgfcl.portal.gov.bd/pages/tenders",

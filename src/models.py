@@ -77,16 +77,31 @@ class Tender:
     def get_publish_date(self) -> Optional[datetime]:
         """从字段中提取发布日期"""
         date_fields = ["发布日期", "Publish Date", "Published Date"]
+        date_formats = ["%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y"]
         for field_name in date_fields:
             value = self.get_field_value(field_name)
             if value:
-                # 尝试解析日期
+                # 去掉路径分隔符和多余文本
                 date_str = value.split("/")[0].strip().split()[0]
-                try:
-                    return datetime.strptime(date_str, "%Y-%m-%d")
-                except ValueError:
-                    continue
+                for fmt in date_formats:
+                    try:
+                        return datetime.strptime(date_str, fmt)
+                    except ValueError:
+                        continue
         return None
+
+    def is_noa(self) -> bool:
+        """判断是否为 NOA 标讯。"""
+        # 检查 key 字段
+        if "NOA" in (self.key or "").upper():
+            return True
+        # 检查标题
+        if "NOA" in (self.title or "").upper():
+            return True
+        # 检查 special 字段
+        if "NOA" in (self.special or "").upper():
+            return True
+        return False
 
 
 @dataclass
@@ -97,6 +112,9 @@ class ScrapedEntry:
     url: str
     date_text: str = ""
     company: Optional[str] = None
+    tender_type: str = ""
+    tender_no: str = ""
+    pdf_url: str = ""
 
     def normalize(self) -> Tender:
         """转换为标准化 Tender 对象"""
