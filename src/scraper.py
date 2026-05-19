@@ -651,24 +651,30 @@ def scrape_detail_page(url: str) -> Optional[Dict[str, Any]]:
 
     data["fields"] = fields
 
-    # 日期提取
+    # 日期提取（支持多语言字段名）
     all_text = soup.get_text(" ", strip=True)
-    date_fields = [
-        "Publish Date",
-        "Published Date",
-        "发布日期",
-        "Closing Date",
-        "截止日期",
-        "Deadline",
+    date_field_names = [
+        # 英文/中文
+        ("Publish Date", "发布日期"),
+        ("Published Date", "发布日期"),
+        ("Closing Date", "截止日期"),
+        ("截止日期", "截止日期"),
+        ("Deadline", "截止日期"),
+        ("Submission Date", "投标截止日期"),
+        # 孟加拉语
+        ("প্রকাশের তারিখ", "发布日期"),  # Publish Date
+        ("আর্কাইভ তারিখ", "截止日期"),    # Archive Date
+        ("দরপত্র জমাদানের শেষ তারিখ", "截止日期"),  # Tender submission deadline
+        ("সমাপ্তির তারিখ", "截止日期"),  # Completion/Closing Date
     ]
-    for f in date_fields:
-        if f in fields:
-            dt = _parse_date(fields[f])
+    for source_name, target_name in date_field_names:
+        if source_name in fields:
+            dt = _parse_date(fields[source_name])
             if dt:
-                data[f"parsed_{f}"] = dt.isoformat()
+                data[f"parsed_{target_name}"] = dt.isoformat()
 
-    # 全文搜索日期
-    if "parsed_日期" not in data:
+    # 全文搜索日期（作为后备）
+    if "parsed_截止日期" not in data and "parsed_投标截止日期" not in data:
         dt = _parse_date(all_text[:2000])
         if dt:
             data["parsed_first_date"] = dt.isoformat()

@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 # 国际标讯类型关键词（排除本地标讯）
 _INTERNATIONAL_KEYWORDS = ["আন্তর্জাতিক", "NOA", "বৈদেশিক"]
 
-# NOA 保留天数
-_NOA_MAX_AGE_DAYS = 30
+# NOA 保留天数（中标通知书，招标已结束，不展示）
+_NOA_MAX_AGE_DAYS = 0
 
 
 def _is_international(tender_type: str, title: str = "") -> bool:
@@ -286,6 +286,71 @@ def _enrich_with_pdf(
         logger.info(f"{scanned}/{completed} 个 PDF 为扫描件")
 
 
+def _enrich_with_detail_page(
+    tenders: Dict[str, List[Tender]], max_workers: int = 3
+) -> None:
+    """对没有截止日期的爬取标讯，访问详情页补充信息。
+
+    Args:
+        tenders: 标讯字典（原地修改）
+        max_workers: 并发数
+    """
+    from src.scraper import scrape_detail_page
+
+    tasks: List[Tuple[str, int, str]] = []
+    for company, tlist in tenders.items():
+        for i, t in enumerate(tlist):
+            if t._source != "scraped":
+                continue
+            # 检查是否已有截止日期
+            has_deadline = any(
+                f.name in ("截止日期", "投标截止日期", "Deadline", "Closing Date")
+                for f in t.fields
+            )
+            if not has_deadline and t._url:
+                tasks.append((company, i, t._url))
+
+    if not tasks:
+        return
+
+    print(f"      ⏳ 正在抓取 {len(tasks)} 个详情页补充信息...")
+    logger.info(f"开始抓取 {len(tasks)} 个详情页")
+
+    def fetch_one(task: Tuple[str, int, str]) -> Tuple[str, int, Optional[Dict[str, Any]]]:
+        company, idx, url = task
+        return company, idx, scrape_detail_page(url)
+
+    enriched = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(fetch_one, t): t for t in tasks}
+        for future in as_completed(futures):
+            company, idx, detail_data = future.result()
+            if not detail_data:
+                continue
+
+            tender = tenders[company][idx]
+            # 补充截止日期（优先取截止日期，后备取发布日期用于NOA判断）
+            for key in ("parsed_截止日期", "parsed_投标截止日期"):
+                if key in detail_data:
+                    tender.fields.insert(
+                        2, TenderField("截止日期", detail_data[key])
+                    )
+                    enriched += 1
+                    break
+
+            # 如果没有截止日期但有发布日期，也补充上用于NOA时间判断
+            if "parsed_发布日期" in detail_data:
+                has_pub = any(f.name == "发布日期" for f in tender.fields)
+                if not has_pub:
+                    tender.fields.insert(
+                        1, TenderField("发布日期", detail_data["parsed_发布日期"])
+                    )
+
+    if enriched > 0:
+        print(f"      ✓ {enriched}/{len(tasks)} 个详情页补充了截止日期")
+        logger.info(f"{enriched}/{len(tasks)} 个详情页补充了截止日期")
+
+
 def _filter_tenders(
     tenders: Dict[str, List[Tender]],
     now: Optional[datetime] = None,
@@ -484,6 +549,9 @@ def get_tender_data(
 
                 # PDF 解析补全信息
                 _enrich_with_pdf(merged_tenders)
+
+                # 详情页补充截止日期（对没有截止日期的爬取标讯）
+                _enrich_with_detail_page(merged_tenders)
             else:
                 print("      ! 未爬取到新标讯，使用回退数据")
                 logger.warning("未爬取到新标讯，使用回退数据")
