@@ -53,7 +53,7 @@ def main() -> int:
 
     # 获取数据
     print("\n[1/2] 正在获取标讯数据...")
-    tenders, new_count, stats = get_tender_data(try_scrape=args.scrape)
+    tenders, new_count, stats = get_tender_data(try_scrape=True)
     total = sum(len(v) for v in tenders.values())
     print(f"      ✓ 共 {total} 条标讯")
     for company in ["BAPEX", "BGFCL", "SGFL"]:

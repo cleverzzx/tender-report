@@ -356,8 +356,8 @@ def _merge_tenders(fallback_tenders, scraped_listings):
     return merged
 
 
-def get_tender_data(try_scrape=False):
-    """获取标讯数据，优先使用爬取结果，失败则用回退数据。"""
+def get_tender_data(try_scrape=True):
+    """获取标讯数据，默认每次都重新爬取，不使用历史标记。"""
     fallback_tenders = get_fallback_tenders()
     merged_tenders = fallback_tenders
 
@@ -377,11 +377,8 @@ def get_tender_data(try_scrape=False):
     # 过滤过期标讯
     merged_tenders = _filter_tenders_dict(merged_tenders)
 
-    # 检测新标讯并保存历史
-    merged_tenders, new_count, stats = detect_new_tenders(merged_tenders)
-
-    if new_count > 0:
-        print(f"      ✓ 发现 {new_count} 条新增标讯")
+    # 跳过新标讯检测（不再标记 [NEW]）
+    merged_tenders, _, _ = detect_new_tenders(merged_tenders)
 
     # 按发布日期倒序排列
     for company in ["BAPEX", "BGFCL", "SGFL"]:

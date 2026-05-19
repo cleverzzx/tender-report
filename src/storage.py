@@ -82,7 +82,7 @@ class HistoryManager:
     def detect_new_tenders(
         self, current_tenders: Dict[str, List[Tender]]
     ) -> Tuple[Dict[str, List[Tender]], int, DetectionStats]:
-        """检测新增标讯。
+        """检测新增标讯（已禁用历史标记，所有标讯均不标记为 NEW）。
 
         Args:
             current_tenders: 当前获取的标讯字典 {"BAPEX": [...], "BGFCL": [...], ...}
@@ -90,51 +90,22 @@ class HistoryManager:
         Returns:
             (合并后的标讯, 新增数量, 统计信息)
         """
-        history = self.load_history()
-        known_hashes = set(history.get("tenders", {}).keys())
-
         merged: Dict[str, List[Tender]] = {}
-        new_count = 0
         stats = DetectionStats(total=0, new=0, by_company={})
-
-        new_hashes: Dict[str, Dict[str, Any]] = {}
 
         for company, tenders in current_tenders.items():
             merged[company] = []
-            company_new = 0
-
             for tender in tenders:
-                tender_hash = tender._hash or self._generate_tender_hash(tender)
-                stats.total += 1
-
-                # 标记是否为新标讯
-                is_new = tender_hash not in known_hashes
-                tender._is_new = is_new
-                tender._hash = tender_hash
-
-                if is_new:
-                    new_count += 1
-                    company_new += 1
-
+                tender._is_new = False
                 merged[company].append(tender)
-                new_hashes[tender_hash] = {
-                    "title": tender.title[:80],
-                    "company": company,
-                    "first_seen": datetime.now().isoformat(),
-                }
+                stats.total += 1
 
             stats.by_company[company] = {
                 "total": len(tenders),
-                "new": company_new,
+                "new": 0,
             }
 
-        stats.new = new_count
-
-        # 保存更新后的历史
-        history["tenders"].update(new_hashes)
-        self.save_history(history)
-
-        return merged, new_count, stats
+        return merged, 0, stats
 
     def get_last_run_time(self) -> Optional[datetime]:
         """获取上次运行时间。
