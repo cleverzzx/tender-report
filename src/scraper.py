@@ -559,7 +559,8 @@ def scrape_all_listings(max_workers: int = 3) -> Dict[str, List[ScrapedEntry]]:
 def _parse_date(text: str) -> Optional[datetime]:
     """尝试从文本提取日期。
 
-    使用 dateutil.parser 进行智能日期解析。
+    使用 dateutil.parser 进行智能日期解析，优先按日-月-年解析
+    （适配孟加拉政府网站常见的 DD-MM-YYYY 格式）。
 
     Args:
         text: 包含日期的文本
@@ -570,18 +571,18 @@ def _parse_date(text: str) -> Optional[datetime]:
     if not text:
         return None
 
-    # 先尝试 dateutil 的智能解析
+    # 先尝试 dateutil 的智能解析（孟加拉网站多为 dayfirst）
     try:
-        parsed = date_parser.parse(text, fuzzy=True)
+        parsed = date_parser.parse(text, fuzzy=True, dayfirst=True)
         if isinstance(parsed, datetime):
             return parsed
     except (ValueError, TypeError):
         pass
 
-    # 回退到正则匹配
+    # 回退到正则匹配（优先日-月-年，再月-日-年）
     patterns = [
         (r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})", "%Y-%m-%d"),
-        (r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", "%m-%d-%Y"),
+        (r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", "%d-%m-%Y"),  # 孟加拉常见 DD-MM-YYYY
         (
             r"(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[,\s]+(\d{4})",
             "%d %b %Y",

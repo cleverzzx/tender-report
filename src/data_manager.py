@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 # 国际标讯类型关键词（排除本地标讯）
 _INTERNATIONAL_KEYWORDS = ["আন্তর্জাতিক", "NOA", "বৈদেশিক"]
 
-# NOA 保留天数（中标通知书，招标已结束，不展示）
-_NOA_MAX_AGE_DAYS = 0
+# NOA 保留天数（中标通知书，招标已结束，保留 5 天）
+_NOA_MAX_AGE_DAYS = 5
 
 
 def _is_international(tender_type: str, title: str = "") -> bool:
@@ -289,7 +289,10 @@ def _enrich_with_pdf(
 def _enrich_with_detail_page(
     tenders: Dict[str, List[Tender]], max_workers: int = 3
 ) -> None:
-    """对没有截止日期的爬取标讯，访问详情页补充信息。
+    """对爬取标讯访问详情页补充完整信息。
+
+    提取标讯类型、详细描述、发布日期、存档日期等字段，
+    并更新 key / special 让展示更清晰。
 
     Args:
         tenders: 标讯字典（原地修改）
@@ -302,12 +305,7 @@ def _enrich_with_detail_page(
         for i, t in enumerate(tlist):
             if t._source != "scraped":
                 continue
-            # 检查是否已有截止日期
-            has_deadline = any(
-                f.name in ("截止日期", "投标截止日期", "Deadline", "Closing Date")
-                for f in t.fields
-            )
-            if not has_deadline and t._url:
+            if t._url:
                 tasks.append((company, i, t._url))
 
     if not tasks:
@@ -329,26 +327,105 @@ def _enrich_with_detail_page(
                 continue
 
             tender = tenders[company][idx]
-            # 补充截止日期（优先取截止日期，后备取发布日期用于NOA判断）
-            for key in ("parsed_截止日期", "parsed_投标截止日期"):
-                if key in detail_data:
-                    tender.fields.insert(
-                        2, TenderField("截止日期", detail_data[key])
-                    )
-                    enriched += 1
-                    break
+            raw_fields = detail_data.get("fields", {})
 
-            # 如果没有截止日期但有发布日期，也补充上用于NOA时间判断
-            if "parsed_发布日期" in detail_data:
-                has_pub = any(f.name == "发布日期" for f in tender.fields)
-                if not has_pub:
+            # ---- 1. 补充截止日期 ----
+            has_deadline = any(
+                f.name in ("截止日期", "投标截止日期", "Deadline", "Closing Date")
+                for f in tender.fields
+            )
+            if not has_deadline:
+                for key in ("parsed_截止日期", "parsed_投标截止日期"):
+                    if key in detail_data:
+                        tender.fields.insert(
+                            2, TenderField("截止日期", detail_data[key])
+                        )
+                        enriched += 1
+                        break
+
+            # ---- 2. 补充发布日期（若缺失）----
+            has_pub = any(f.name == "发布日期" for f in tender.fields)
+            if not has_pub and "parsed_发布日期" in detail_data:
+                tender.fields.insert(
+                    1, TenderField("发布日期", detail_data["parsed_发布日期"])
+                )
+
+            # ---- 3. 提取标讯类型并翻译 ----
+            tender_type = raw_fields.get("দরপত্রের ধরণ", "")
+            # 孟加拉语类型翻译
+            type_translation = {
+                "আন্তর্জাতিক NOA": "国际 NOA",
+                "বৈদেশিক-দরপত্র": "国际招标",
+                "আন্তর্জাতিক": "国际招标",
+                "International Tender": "国际招标",
+                "Foreign/International Tender": "国际招标",
+            }
+            if tender_type in type_translation:
+                tender_type = type_translation[tender_type]
+            elif not tender_type:
+                # 尝试从 title 推断
+                if "NOA" in tender.title.upper():
+                    tender_type = "国际 NOA"
+                elif "re-tender" in tender.title.lower():
+                    tender_type = "国际重新招标"
+                elif "international" in tender.title.lower():
+                    tender_type = "国际招标"
+                elif "EOI" in tender.title.upper():
+                    tender_type = "意向书征集"
+
+            # 更新 key 字段，包含类型和来源
+            type_info = f"类型: <b>{tender_type}</b>" if tender_type else ""
+            pub_info = ""
+            for f in tender.fields:
+                if f.name == "发布日期":
+                    pub_info = f"发布: {f.value}"
+                    break
+            key_parts = [p for p in [type_info, pub_info, f"来源: {company}"] if p]
+            tender.key = " | ".join(key_parts)
+
+            # 更新 special 字段
+            special_parts = ["<b>从官网实时爬取</b>"]
+            archive_raw = raw_fields.get("আর্কাইভ তারিখ", "")
+            if archive_raw:
+                # 转换孟加拉语日期为标准格式
+                from src.scraper import _parse_date
+                archive_dt = _parse_date(archive_raw)
+                if archive_dt:
+                    special_parts.append(f"存档日期: {archive_dt.strftime('%Y-%m-%d')}")
+                else:
+                    special_parts.append(f"存档日期: {archive_raw}")
+            special_parts.append("请访问详情页获取完整招标文件")
+            tender.special = " | ".join(special_parts)
+
+            # ---- 4. 补充详细描述 ----
+            detail = raw_fields.get("বিস্তারিত", "")
+            if detail and len(detail) > 10:
+                # 去重：如果详细描述和标题差异较大才添加
+                if detail.lower() not in tender.title.lower():
                     tender.fields.insert(
-                        1, TenderField("发布日期", detail_data["parsed_发布日期"])
+                        3, TenderField("项目详情", detail[:500])
                     )
+
+            # ---- 5. 补充其他可用字段 ----
+            # 内容类型（翻译孟加拉语）
+            content_type = raw_fields.get("কন্টেন্ট টাইপ", "")
+            if content_type:
+                # 翻译常见类型
+                type_map = {
+                    "টেন্ডার (দরপত্র)": "招标公告",
+                    "নোটিশ": "通知",
+                    "সংবাদ": "新闻",
+                }
+                content_type_cn = type_map.get(content_type, content_type)
+                if not any(f.name == "内容类型" for f in tender.fields):
+                    tender.fields.insert(0, TenderField("内容类型", content_type_cn))
 
     if enriched > 0:
         print(f"      ✓ {enriched}/{len(tasks)} 个详情页补充了截止日期")
         logger.info(f"{enriched}/{len(tasks)} 个详情页补充了截止日期")
+    else:
+        print(f"      ✓ {len(tasks)} 个详情页信息已补充")
+        logger.info(f"{len(tasks)} 个详情页信息已补充")
 
 
 def _filter_tenders(
