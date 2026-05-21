@@ -162,12 +162,28 @@ def _normalize_scraped_entry(
     if entry.tender_type:
         type_label = f" | 类型: {entry.tender_type}"
 
-    # 招标编号优先级：PDF > 列表Col2 > 默认
+    # 招标编号优先级：PDF > 列表 tender_no > 标题解析 > 默认
     tender_no = "未知（请查看详情页）"
     if pdf_data and pdf_data.get("tender_no_from_pdf"):
         tender_no = pdf_data["tender_no_from_pdf"]
     elif entry.tender_no:
         tender_no = entry.tender_no
+    else:
+        # 从标题解析招标编号（常见格式）
+        import re
+        # 匹配 Ref. No. XXX/XXX/XXX 或 Tender No: XXX 等格式
+        patterns = [
+            r'Ref\.?\s*No\.?\s*:?\s*([A-Z0-9/\-().]+)',
+            r'Tender\s+No\.?\s*:?\s*([A-Z0-9/\-().]+)',
+            r'(?: Tender |^)([A-Z]{2,10}/[A-Z0-9/\-]+(?:/\d{4})?)',
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, entry.title, re.IGNORECASE)
+            if m:
+                tender_no = m.group(1).strip()
+                # 清理结尾的标点
+                tender_no = re.sub(r'[\s,;:]+$', '', tender_no)
+                break
 
     fields = [
         TenderField("招标编号", tender_no),
