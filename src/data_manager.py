@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _INTERNATIONAL_KEYWORDS = ["আন্তর্জাতিক", "NOA", "বৈদেশিক"]
 
 # NOA 保留天数（中标通知书，招标已结束，保留 5 天）
-_NOA_MAX_AGE_DAYS = 5
+_NOA_MAX_AGE_DAYS = 14
 
 
 def _is_international(tender_type: str, title: str = "") -> bool:
@@ -34,23 +34,31 @@ def _is_international(tender_type: str, title: str = "") -> bool:
     if tender_type:
         return any(kw in tender_type for kw in _INTERNATIONAL_KEYWORDS)
 
-    # 类型为空时（如 SGFL），根据标题判断
+    # 类型为空时（如 Petrobangla 来源），根据标题判断
     if not title:
         return True
 
     title_upper = title.upper()
-    # 国际标讯关键词
-    intl_keywords = ["INTERNATIONAL", "FOREIGN", "NOA", "EOI", "EXPRESSION OF INTEREST"]
+    # 国际标讯关键词（英文 + 孟加拉语）
+    intl_keywords = [
+        "INTERNATIONAL", "FOREIGN", "NOA", "EOI", "EXPRESSION OF INTEREST",
+        "আন্তর্জাতিক",  # 国际
+        "আন্তজার্তিক",  # 国际（变体）
+        "বৈদেশিক",      # 外国/海外
+    ]
     if any(kw in title_upper for kw in intl_keywords):
         return True
 
-    # 本地标讯关键词
-    local_keywords = ["E-TENDER", "RFQ", "স্থানীয়"]
+    # 本地标讯关键词（英文 + 孟加拉语）
+    local_keywords = [
+        "E-TENDER", "RFQ", "RFX", "RFP",
+        "স্থানীয়",      # 本地
+    ]
     if any(kw in title_upper for kw in local_keywords):
         return False
 
-    # 无法判断时保留
-    return True
+    # 类型为空且标题无任何国际标记 → 默认为本地标讯（防止本地采购混入）
+    return False
 
 
 def _is_noa(entry: ScrapedEntry) -> bool:
@@ -62,6 +70,7 @@ def _is_tender_expired(tender: Tender, now: Optional[datetime] = None) -> bool:
     """判断标讯是否已过期。
 
     从字段中提取截止日期，与当前时间比较。
+    对标注了延期（Extension）的标讯给予 7 天缓冲期。
 
     Args:
         tender: 标讯对象
@@ -134,6 +143,91 @@ def _parse_scraped_date(date_text: str) -> Optional[datetime]:
     return None
 
 
+def _format_date_for_display(date_str: str) -> str:
+    """统一日期显示格式：YYYY-MM-DD 或 YYYY-MM-DD HH:MM。
+
+    处理各种来源的日期格式：
+      - ISO: 2026-06-15T00:00:00 → 2026-06-15
+      - ISO 有时间: 2026-06-18T12:00:00 → 2026-06-18 12:00
+      - 带时区: 2026-06-18 12:00 BST → 2026-06-18 12:00
+      - 带"约"字: 约2026-06-12 → 2026-06-12
+      - DD-MM-YYYY: 14-05-2026 → 2025-05-14
+      - 多日期: 2026-01-28 / 延期公告 2026-04-13 → 2026-01-28 / 2026-04-13
+
+    Args:
+        date_str: 原始日期字符串
+
+    Returns:
+        统一格式后的日期字符串
+    """
+    if not date_str:
+        return date_str
+
+    import re
+
+    # 处理"约"字前缀
+    date_str = re.sub(r'^约\s*', '', date_str.strip())
+
+    # 多日期情况（用 / 或 延期公告 分隔）
+    # 提取所有日期部分，统一格式后重新组合
+    date_patterns = [
+        r'(\d{4}-\d{2}-\d{2})',  # YYYY-MM-DD
+        r'(\d{4}/\d{2}/\d{2})',  # YYYY/MM/DD
+    ]
+
+    all_dates = []
+    for pattern in date_patterns:
+        matches = re.findall(pattern, date_str)
+        all_dates.extend(matches)
+
+    if len(all_dates) > 1:
+        # 多日期情况，只保留日期部分，移除时间
+        return " / ".join(sorted(set(all_dates)))
+
+    # 单日期处理
+    if all_dates:
+        base_date = all_dates[0]
+    else:
+        # 尝试从文本中解析日期
+        base_date = date_str
+
+    # 检查是否是 DD-MM-YYYY 格式（如 14-05-2026）
+    dd_mm_yyyy_match = re.search(r'^(\d{1,2})-(\d{1,2})-(\d{4})$', base_date.strip())
+    if dd_mm_yyyy_match:
+        day = dd_mm_yyyy_match.group(1).zfill(2)
+        month = dd_mm_yyyy_match.group(2).zfill(2)
+        year = dd_mm_yyyy_match.group(3)
+        return f"{year}-{month}-{day}"
+
+    # ISO 格式（含 T 分隔符）
+    if "T" in base_date:
+        parts = base_date.split("T")
+        date_part = parts[0]
+        time_part = parts[1] if len(parts) > 1 else ""
+        # 提取 HH:MM 部分，忽略秒和时区
+        time_match = re.search(r'(\d{2}:\d{2})', time_part)
+        if time_match and time_part != "00:00:00":
+            return f"{date_part} {time_match.group(1)}"
+        return date_part
+
+    # 处理普通日期+时间+时区格式
+    # 如：2026-06-18 12:00 BST → 2026-06-18 12:00
+    time_match = re.search(r'^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})', base_date)
+    if time_match:
+        date_part = time_match.group(1)
+        time_part = time_match.group(2)
+        # 标准化时间为 HH:MM 格式
+        hour, minute = time_part.split(':')
+        return f"{date_part} {hour.zfill(2)}:{minute}"
+
+    # 纯日期格式
+    date_match = re.search(r'(\d{4}-\d{2}-\d{2})', base_date)
+    if date_match:
+        return date_match.group(1)
+
+    return date_str
+
+
 def _normalize_scraped_entry(
     entry: ScrapedEntry,
     company: Optional[str] = None,
@@ -187,7 +281,7 @@ def _normalize_scraped_entry(
 
     fields = [
         TenderField("招标编号", tender_no),
-        TenderField("发布日期", entry.date_text or "详见详情页"),
+        TenderField("发布日期", _format_date_for_display(entry.date_text) or "详见详情页"),
     ]
 
     # 如果 PDF 解析到了关键字段
@@ -197,7 +291,7 @@ def _normalize_scraped_entry(
         if pdf_data.get("BDT"):
             fields.append(TenderField("合同金额(BDT)", f"BDT {pdf_data['BDT']}"))
         if pdf_data.get("deadline"):
-            fields.append(TenderField("截止日期", pdf_data["deadline"]))
+            fields.append(TenderField("截止日期", _format_date_for_display(pdf_data["deadline"])))
 
     fields.append(TenderField("采购内容", entry.title))
     fields.append(
@@ -294,7 +388,7 @@ def _enrich_with_pdf(
                     )
                 if pdf_data.get("deadline"):
                     tender.fields.insert(
-                        4, TenderField("截止日期", pdf_data["deadline"])
+                        4, TenderField("截止日期", _format_date_for_display(pdf_data["deadline"]))
                     )
 
     if scanned > 0:
@@ -351,30 +445,65 @@ def _enrich_with_detail_page(
                 for f in tender.fields
             )
             if not has_deadline:
+                deadline_added = False
                 for key in ("parsed_截止日期", "parsed_投标截止日期"):
                     if key in detail_data:
                         tender.fields.insert(
-                            2, TenderField("截止日期", detail_data[key])
+                            2, TenderField("截止日期", _format_date_for_display(detail_data[key]))
                         )
                         enriched += 1
+                        deadline_added = True
                         break
 
-            # ---- 2. 补充发布日期（若缺失）----
-            has_pub = any(f.name == "发布日期" for f in tender.fields)
-            if not has_pub and "parsed_发布日期" in detail_data:
-                tender.fields.insert(
-                    1, TenderField("发布日期", detail_data["parsed_发布日期"])
-                )
+                # 详情页也没有真实截止日期 → 标注"详见招标文件PDF"
+                if not deadline_added:
+                    import re
+                    pdf_url = ""
+                    for f in tender.fields:
+                        if f.name == "PDF下载":
+                            m = re.search(r"href='([^']+)'", f.value)
+                            if m:
+                                pdf_url = m.group(1)
+                            break
+                    if pdf_url:
+                        tender.fields.insert(
+                            2,
+                            TenderField(
+                                "截止日期",
+                                f"<a href='{pdf_url}' color='blue'>详见招标文件PDF</a>",
+                            ),
+                        )
+                    else:
+                        tender.fields.insert(
+                            2, TenderField("截止日期", "详见官网招标文件")
+                        )
+
+            # ---- 2. 更新发布日期（详情页解析结果更准确）----
+            if "parsed_发布日期" in detail_data:
+                formatted_pub = _format_date_for_display(detail_data["parsed_发布日期"])
+                # 查找并更新已有的发布日期字段
+                pub_found = False
+                for fi, f in enumerate(tender.fields):
+                    if f.name == "发布日期":
+                        tender.fields[fi] = TenderField("发布日期", formatted_pub)
+                        pub_found = True
+                        break
+                if not pub_found:
+                    tender.fields.insert(1, TenderField("发布日期", formatted_pub))
 
             # ---- 3. 提取标讯类型并翻译 ----
             tender_type = raw_fields.get("দরপত্রের ধরণ", "")
             # 孟加拉语类型翻译
             type_translation = {
                 "আন্তর্জাতিক NOA": "国际 NOA",
+                "আন্তর্জাতিক দরপত্র": "国际招标",
                 "বৈদেশিক-দরপত্র": "国际招标",
+                "বৈদেশিক দরপত্র": "国际招标",
                 "আন্তর্জাতিক": "国际招标",
                 "International Tender": "国际招标",
                 "Foreign/International Tender": "国际招标",
+                "স্থানীয় দরপত্র": "本地招标",
+                "স্থানীয় দরপত্র (ই-জিপি সহ)": "本地招标(e-GP)",
             }
             if tender_type in type_translation:
                 tender_type = type_translation[tender_type]
@@ -401,26 +530,96 @@ def _enrich_with_detail_page(
 
             # 更新 special 字段
             special_parts = ["<b>从官网实时爬取</b>"]
+
+            # 存档日期（过滤掉明显占位日期如 2030-12-31）
             archive_raw = raw_fields.get("আর্কাইভ তারিখ", "")
             if archive_raw:
-                # 转换孟加拉语日期为标准格式
                 from src.scraper import _parse_date
                 archive_dt = _parse_date(archive_raw)
-                if archive_dt:
+                if archive_dt and archive_dt.year < 2030:
                     special_parts.append(f"存档日期: {archive_dt.strftime('%Y-%m-%d')}")
-                else:
-                    special_parts.append(f"存档日期: {archive_raw}")
-            special_parts.append("请访问详情页获取完整招标文件")
+
+            # 引导用户查看 PDF 获取完整信息
+            pdf_url = ""
+            import re
+            for f in tender.fields:
+                if f.name == "PDF下载":
+                    m = re.search(r"href='([^']+)'", f.value)
+                    if m:
+                        pdf_url = m.group(1)
+                    break
+            if pdf_url:
+                special_parts.append(
+                    f"<a href='{pdf_url}' color='blue'>完整招标要求和截止日期详见PDF</a>"
+                )
+            else:
+                special_parts.append("请访问详情页获取完整招标文件")
             tender.special = " | ".join(special_parts)
 
-            # ---- 4. 补充详细描述 ----
-            detail = raw_fields.get("বিস্তারিত", "")
+            # ---- 4. 补充详细描述和采购内容 ----
+            detail = ""
+
+            # 优先使用详情页解析的描述字段（如 শিরোনাম 标题）
+            if "parsed_描述" in detail_data:
+                detail = detail_data["parsed_描述"].strip()
+
+            # 也检查原始字段
+            if not detail or len(detail) < 10:
+                detail = raw_fields.get("বিস্তারিত", "")
+                desc_fields = [
+                    "বিস্তারিত", "দরপত্রের বিবরণ", "স্পেসিফিকেশন",
+                    "বিষয়", "Subject", "Description", "Details",
+                    "Tender Description", "Scope of Work", "Work Description",
+                ]
+                for desc_field in desc_fields:
+                    if desc_field in raw_fields:
+                        candidate = raw_fields[desc_field].strip()
+                        if len(candidate) > len(detail):
+                            detail = candidate
+
+            # 清理 detail 文本
+            if detail:
+                detail = detail.replace("\n", " ").replace("\r", " ")
+                detail = " ".join(detail.split())  # 去除多余空格
+
             if detail and len(detail) > 10:
-                # 去重：如果详细描述和标题差异较大才添加
-                if detail.lower() not in tender.title.lower():
+                # 去重：如果详细描述和标题差异较大才添加项目详情字段
+                if detail.lower() not in tender.title.lower() and len(detail) > len(tender.title):
                     tender.fields.insert(
                         3, TenderField("项目详情", detail[:500])
                     )
+
+                # 更新采购内容：优先使用详情页描述
+                for fi, f in enumerate(tender.fields):
+                    if f.name == "采购内容":
+                        current = f.value.strip()
+                        # 如果详情页描述明显比当前采购内容更有信息量，则替换
+                        should_update = False
+                        # 当前是标题，且标题主要是编号+日期（没有实质性描述）
+                        if current == tender.title and len(detail) > len(current) * 0.5:
+                            should_update = True
+                        # 当前太短
+                        elif len(current) < 80 and len(detail) > len(current):
+                            should_update = True
+                        # 详情页描述明显更长
+                        elif len(detail) > len(current) + 20:
+                            should_update = True
+
+                        if should_update:
+                            cleaner = detail[:300]
+                            tender.fields[fi] = TenderField("采购内容", cleaner)
+                        break
+            else:
+                # 详情页没有描述 → 引导用户查看PDF
+                for fi, f in enumerate(tender.fields):
+                    if f.name == "采购内容":
+                        current = f.value.strip()
+                        if len(current) < 60:
+                            tender.fields[fi] = TenderField(
+                                "采购内容",
+                                f"{current}（完整技术规格和投标要求详见PDF招标文件）"
+                            )
+                        break
 
             # ---- 5. 补充其他可用字段 ----
             # 内容类型（翻译孟加拉语）
@@ -546,6 +745,7 @@ def _merge_tenders(
             continue
 
         added_count = 0
+        updated_count = 0
         for entry in company_scraped:
             entry_title = entry.title.lower()
             if not entry_title or len(entry_title) < 10:
@@ -553,10 +753,12 @@ def _merge_tenders(
             if entry.url and entry.url in existing_urls:
                 continue
             is_duplicate = False
-            for existing in existing_titles:
+            match_idx = -1
+            for idx, existing in enumerate(existing_titles):
                 similarity = difflib.SequenceMatcher(None, entry_title, existing).ratio()
                 if similarity > similarity_threshold:
                     is_duplicate = True
+                    match_idx = idx
                     break
             if not is_duplicate:
                 normalized = _normalize_scraped_entry(entry, company)
@@ -565,31 +767,132 @@ def _merge_tenders(
                 if entry.url:
                     existing_urls.add(entry.url)
                 added_count += 1
+            elif match_idx >= 0 and entry.date_text:
+                # 去重但更新：用爬取数据补全 fallback 标讯的截止日期和链接
+                match_tender = company_tenders[match_idx]
+                has_deadline = any(
+                    f.name in ("截止日期", "投标截止日期", "Deadline", "Closing Date")
+                    for f in match_tender.fields
+                )
+                if not has_deadline and entry.date_text:
+                    match_tender.fields.insert(
+                        0, TenderField("截止日期", _format_date_for_display(entry.date_text))
+                    )
+                # 如果爬取条目有 PDF 链接且 fallback 没有，补上
+                if entry.pdf_url:
+                    has_pdf = any(f.name == "PDF下载" for f in match_tender.fields)
+                    if not has_pdf:
+                        match_tender.fields.append(
+                            TenderField("PDF下载", entry.pdf_url)
+                        )
+                # 更新详情页链接
+                if entry.url and not match_tender._url:
+                    match_tender._url = entry.url
+                # 保留更详细的采购内容
+                scraped_procurement = entry.title
+                fallback_procurement = ""
+                for f in match_tender.fields:
+                    if f.name == "采购内容":
+                        fallback_procurement = f.value
+                        break
+
+                # 判断哪个采购内容更有实质描述性
+                def _extract_core_content(text: str) -> str:
+                    """提取核心描述内容（去除常见前缀）。"""
+                    import re
+                    t = text.lower()
+                    # 去除常见前缀
+                    prefixes = [
+                        r'international tender for procurement of\s*',
+                        r'international tender notice:?\s*',
+                        r'procurement of\s*',
+                        r'request for expressions of interest \(eoi\) for\s*',
+                        r'eoi for\s*',
+                    ]
+                    for p in prefixes:
+                        t = re.sub(p, '', t)
+                    return t.strip()
+
+                scraped_core = _extract_core_content(scraped_procurement)
+                fallback_core = _extract_core_content(fallback_procurement)
+
+                # 判断爬取标题是否主要是编号+日期（缺乏实质性描述）
+                def _is_ref_date_title(title: str) -> bool:
+                    """判断标题是否主要是招标编号+日期格式。"""
+                    import re
+                    title_upper = title.upper()
+                    has_ref_no = bool(re.search(r'REF\.?\s*NO\.?', title_upper))
+                    has_tender_no = bool(re.search(r'TENDER\s+NO', title_upper))
+                    has_date = bool(re.search(r'DATE|DATED|\d{4}-\d{2}-\d{2}', title_upper))
+                    return (has_ref_no or has_tender_no) and has_date
+
+                should_update = False
+                # 情况1: 爬取标题是编号+日期格式，fallback 有实质描述 → 保留 fallback
+                if _is_ref_date_title(scraped_procurement) and not _is_ref_date_title(fallback_procurement):
+                    should_update = False
+                # 情况2: 爬取标题去掉前缀后，和 fallback 核心内容相似 → 保留 fallback（更简洁）
+                elif scraped_core in fallback_core or fallback_core in scraped_core:
+                    should_update = False
+                # 情况3: 爬取标题去掉前缀后，明显比 fallback 更长更有信息 → 更新
+                elif len(scraped_core) > len(fallback_core) + 10:
+                    should_update = True
+
+                if should_update:
+                    for fi, f in enumerate(match_tender.fields):
+                        if f.name == "采购内容":
+                            match_tender.fields[fi] = TenderField("采购内容", scraped_procurement)
+                            break
+                updated_count += 1
 
         merged[company] = company_tenders
         if added_count > 0:
             print(f"      + {company}: 新增 {added_count} 条爬取标讯")
             logger.info(f"{company}: 新增 {added_count} 条爬取标讯")
+        if updated_count > 0:
+            print(f"      ~ {company}: 更新 {updated_count} 条已有标讯（截止日期/链接）")
+            logger.info(f"{company}: 更新 {updated_count} 条已有标讯")
 
     return merged
 
 
 def _infer_company_from_title(title: str, url: str = "") -> Optional[str]:
-    """从标讯标题推断所属公司。"""
+    """从标讯标题推断所属公司（支持英文和孟加拉语）。"""
     title_lower = title.lower()
     url_lower = url.lower()
+
+    # 1. URL 推断（优先级最高）
     if "sgfl.gov.bd" in url_lower or "office-sgfl" in url_lower:
         return "SGFL"
     if "bapex.com.bd" in url_lower or "office-bapex" in url_lower:
         return "BAPEX"
-    if "bgfcl" in url_lower:
+    if "bgfcl" in url_lower or "office-bgfcl" in url_lower:
         return "BGFCL"
+
+    # 2. 孟加拉语公司名称匹配（Petrobangla 来源的标讯多为孟加拉语标题）
+    #    এসজিএফএল = SGFL, বাপেক্স = BAPEX, বিজিএফসিএল = BGFCL
+    if "এসজিএফএল" in title or "এস.জি.এফ.এল" in title:
+        return "SGFL"
+    if "বাপেক্স" in title or "বি.এ.পি.ই.এক্স" in title:
+        return "BAPEX"
+    if "বিজিএফসিএল" in title or "বি.জি.এফ.সি.এল" in title:
+        return "BGFCL"
+
+    # 3. 英文名称匹配
     if "sgfl" in title_lower or "sylhet" in title_lower:
         return "SGFL"
     if "bapex" in title_lower:
         return "BAPEX"
     if "bgfcl" in title_lower:
         return "BGFCL"
+
+    # 4. URL 中的孟加拉语公司名（部分 URL 包含孟加拉语 slug）
+    if "এসজিএফএল" in url_lower:
+        return "SGFL"
+    if "বাপেক্স" in url_lower:
+        return "BAPEX"
+    if "বিজিএফসিএল" in url_lower:
+        return "BGFCL"
+
     return None
 
 
