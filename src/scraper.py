@@ -811,14 +811,15 @@ def _parse_money_amounts(text: str) -> Dict[str, str]:
     amounts: Dict[str, str] = {}
     # 孟加拉金额格式（lakh/crore）
     money_pattern = re.compile(
-        r"(USD|US\$|BDT|US\s*Doll[ae]r|Bangladeshi\s*Taka)\s+"
+        r"(USD|US[$]|BDT|US\s*Doll[ae]r|Bangladeshi\s*Taka)\s+"
         r"([\d,]+\.?\d*)",
         re.IGNORECASE,
     )
     for m in money_pattern.finditer(text):
         currency = m.group(1).upper().strip()
         value = m.group(2)
-        if "DOLLAR" in currency or "USD" in currency:
+        # 规范化 US$ → USD
+        if "DOLLAR" in currency or "USD" in currency or "US$" in currency:
             amounts["USD"] = value
         elif "TAKA" in currency or "BDT" in currency:
             amounts["BDT"] = value

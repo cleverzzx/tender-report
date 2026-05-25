@@ -40,22 +40,27 @@ def _is_international(tender_type: str, title: str = "") -> bool:
 
     title_upper = title.upper()
     # 国际标讯关键词（英文 + 孟加拉语）
-    intl_keywords = [
+    intl_keywords_en = [
         "INTERNATIONAL", "FOREIGN", "NOA", "EOI", "EXPRESSION OF INTEREST",
         "OFFSHORE", "BIDDING ROUND", "PRE-QUALIFICATION", "ICB",
+    ]
+    # 孟加拉语关键词单独检查（不转大写，孟加拉语无大小写）
+    intl_keywords_bn = [
         "আন্তর্জাতিক",  # 国际
         "আন্তজার্তিক",  # 国际（变体）
         "বৈদেশিক",      # 外国/海外
     ]
-    if any(kw in title_upper for kw in intl_keywords):
+    if any(kw in title_upper for kw in intl_keywords_en):
+        return True
+    if any(kw in title for kw in intl_keywords_bn):
         return True
 
     # 本地标讯关键词（英文 + 孟加拉语）
-    local_keywords = [
-        "E-TENDER", "RFQ", "RFX", "RFP",
-        "স্থানীয়",      # 本地
-    ]
-    if any(kw in title_upper for kw in local_keywords):
+    local_keywords_en = ["E-TENDER", "RFQ", "RFX", "RFP"]
+    local_keywords_bn = ["স্থানীয়"]  # 本地
+    if any(kw in title_upper for kw in local_keywords_en):
+        return False
+    if any(kw in title for kw in local_keywords_bn):
         return False
 
     # 类型为空且标题无任何国际标记 → 默认为本地标讯（防止本地采购混入）
@@ -253,6 +258,16 @@ def _normalize_scraped_entry(
         elif "sgfl" in title_lower:
             company = "SGFL"
 
+    # 孟加拉语标题检测：Bangla Unicode range U+0980-U+09FF
+    _has_bangla = any(0x0980 <= ord(ch) <= 0x09FF for ch in entry.title)
+    display_title = entry.title
+    if _has_bangla:
+        # 孟加拉语标题在中文字体PDF中无法渲染，使用招标编号构建标题
+        if entry.tender_no and entry.tender_no != "未知（请查看详情页）":
+            display_title = f"[Bengali Title] Tender #{entry.tender_no}"
+        else:
+            display_title = f"[Bengali Title] {entry.title[:50]}"
+
     type_label = ""
     if entry.tender_type:
         type_label = f" | 类型: {entry.tender_type}"
@@ -294,7 +309,7 @@ def _normalize_scraped_entry(
         if pdf_data.get("deadline"):
             fields.append(TenderField("截止日期", _format_date_for_display(pdf_data["deadline"])))
 
-    fields.append(TenderField("采购内容", entry.title))
+    fields.append(TenderField("采购内容", display_title))
     fields.append(
         TenderField(
             "官方来源",
@@ -317,7 +332,7 @@ def _normalize_scraped_entry(
         )
 
     return Tender(
-        title=entry.title,
+        title=display_title,
         key=f"状态: <b>新爬取</b> | 来源: {company or 'Unknown'}{type_label}",
         special="<b>从官网爬取</b> | 请访问详情页获取完整信息",
         fields=fields,
@@ -484,20 +499,61 @@ def _enrich_with_pdf(
                     special_parts.append(f"项目: {pdf_data['project_name'][:100]}")
                 tender.special = " | ".join(special_parts)
 
-            # 处理非扫描 PDF（原有逻辑）
+            # 处理非扫描 PDF（原有逻辑 + 增强字段提取）
             elif not pdf_data.get("error"):
-                if pdf_data.get("USD"):
-                    tender.fields.insert(
-                        2, TenderField("合同金额(USD)", f"USD {pdf_data['USD']}")
-                    )
-                if pdf_data.get("BDT"):
-                    tender.fields.insert(
-                        3, TenderField("合同金额(BDT)", f"BDT {pdf_data['BDT']}")
-                    )
                 if pdf_data.get("deadline"):
-                    tender.fields.insert(
-                        4, TenderField("截止日期", _format_date_for_display(pdf_data["deadline"]))
-                    )
+                    dl_display = _format_date_for_display(pdf_data["deadline"])
+                    tender.fields.insert(2, TenderField("截止日期", dl_display))
+                    # 更新 key 中的截止日期
+                    if "截止日期" not in tender.key:
+                        existing = tender.key
+                        tender.key = f"截止日期 <b>{dl_display}</b> | {existing}"
+
+                # 价格：区分投标文件价格和合同金额
+                raw_text = pdf_data.get("raw_text", "")
+                import re as _re
+                is_bid_doc = bool(_re.search(r"(?:Bidding|Promotional)\s*(?:Document|Package)", raw_text, _re.IGNORECASE))
+
+                if pdf_data.get("USD"):
+                    label = "投标文件价格(USD)" if is_bid_doc else "合同金额(USD)"
+                    tender.fields.insert(3, TenderField(label, f"USD {pdf_data['USD']}"))
+                if pdf_data.get("BDT"):
+                    label = "投标文件价格(BDT)" if is_bid_doc else "合同金额(BDT)"
+                    tender.fields.insert(4, TenderField(label, f"BDT {pdf_data['BDT']}"))
+
+                # 提取资格要求
+                qual_match = _re.search(
+                    r"QUALIFICATION\s*CRITERIA(.{50,600}?)(?:\n\s*\n|\n[A-Z]{2,}|\Z)",
+                    raw_text, _re.IGNORECASE | _re.DOTALL,
+                )
+                if qual_match:
+                    qual = " ".join(qual_match.group(1).split())
+                    if len(qual) > 20:
+                        tender.fields.insert(5, TenderField("投标资格", qual[:400]))
+
+                # 提取投标文件可获得日期
+                avail_match = _re.search(
+                    r"(?:available\s*from|available\s*on)\s*(\d{1,2}(?:st|nd|rd|th)?\s*\w+\s*\d{4})",
+                    raw_text, _re.IGNORECASE,
+                )
+                if avail_match:
+                    tender.fields.insert(6, TenderField("标书可获取日期", avail_match.group(1).strip()))
+
+                # 更新 key
+                if pdf_data.get("USD") and "标书价格" not in tender.key and "合同金额" not in tender.key:
+                    price_label = "投标文件价格" if is_bid_doc else "合同金额"
+                    tender.key = f"{price_label} <b>USD {pdf_data['USD']}</b> | {tender.key}"
+
+                # 查找招标编号
+                tn_match = _re.search(
+                    r"Ref[:\s]+(\d{2}\.\d{2}\.\d{4}\.\d{3}\.\d{2}\.\d{4}\.\d{2}\.\d{2})",
+                    raw_text,
+                )
+                if tn_match:
+                    for fi, f in enumerate(tender.fields):
+                        if f.name == "招标编号" and ("Offshore" in str(f.value) or "未知" in str(f.value)):
+                            tender.fields[fi] = TenderField("招标编号", tn_match.group(1))
+                            break
 
     if scanned > 0 and ocr_success == 0:
         print(f"      ⚠ {scanned}/{completed} 个 PDF 为扫描件，OCR 未成功")

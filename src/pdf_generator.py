@@ -170,30 +170,26 @@ class PDFGenerator:
             ),
         }
 
-    def _render_tender(self, story: List, tender: Tender, index: int) -> None:
-        """渲染单条标讯（标题 + key + special + 详情表）
-
-        Args:
-            story: PDF 故事板列表
-            tender: 标讯对象
-            index: 标讯序号
-        """
+    def _render_tender(
+        self, story: List, tender: Tender, index: int, company: str = ""
+    ) -> None:
+        """渲染单条标讯（标题 + 公司标签 + key + special + 详情表）"""
         story.append(Spacer(1, 6))
 
-        # 判断是否为新标讯，添加标记
         is_new = tender._is_new
         new_badge = " <font color='red'>[NEW]</font>" if is_new else ""
+        company_tag = f" <font color='#4a5568'>[{company}]</font>" if company else ""
 
         story.append(
             Paragraph(
-                f"<b>标讯 {index + 1}: {tender.title}</b>{new_badge}", self.styles["field_name"]
+                f"<b>标讯 {index + 1}: {tender.title}</b>{new_badge}{company_tag}",
+                self.styles["field_name"],
             )
         )
         story.append(Paragraph(f"■ Key: {tender.key}", self.styles["key"]))
         story.append(Paragraph(f"■ Special: {tender.special}", self.styles["special"]))
         story.append(Spacer(1, 8))
 
-        # 构建表格数据
         table_data = [
             [
                 Paragraph(field.name, self.styles["table_label"]),
@@ -370,22 +366,28 @@ class PDFGenerator:
         # 汇总信息
         self._render_summary(story, tenders, validation_date)
 
-        # 各公司标讯（动态章节编号 + 全局连续序号）
-        chinese_nums = ["二", "三", "四", "五"]
-        section_idx = 0
-        global_index = 0
-        for section_title, company_key in self.COMPANY_SECTIONS:
-            tender_list = tenders.get(company_key, [])
-            if tender_list:
-                num_prefix = chinese_nums[section_idx]
-                full_title = f"{num_prefix}、{section_title}"
-                global_index = self._render_company_section(
-                    story, full_title, tender_list, global_index
-                )
-                section_idx += 1
+        # 将所有标讯按发布日期从新到旧全局排列
+        all_tenders: List[Tuple[Tender, str]] = []  # (tender, company_key)
+        for _, company_key in self.COMPANY_SECTIONS:
+            for t in tenders.get(company_key, []):
+                all_tenders.append((t, company_key))
+        all_tenders.sort(
+            key=lambda x: x[0].get_publish_date() or datetime.min,
+            reverse=True,
+        )
 
-        # 行业动态（编号紧跟公司章节之后）
-        self._render_industry_news(story, validation_date, section_num=section_idx + 2)
+        # 二、标讯详情（全局连续序号，从新到旧）
+        story.append(Paragraph("二、国际招标标讯详情", self.styles["section"]))
+        global_index = 0
+        for tender, company in all_tenders:
+            self._render_tender(story, tender, global_index, company)
+            global_index += 1
+            if global_index < len(all_tenders):
+                story.append(Spacer(1, 18))
+        story.append(Spacer(1, 15))
+
+        # 行业动态
+        self._render_industry_news(story, validation_date, section_num=3)
 
         # 页脚
         self._render_footer(story, now)
