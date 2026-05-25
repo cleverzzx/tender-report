@@ -398,32 +398,44 @@ def _enrich_with_pdf(
 
             # 处理 OCR 提取的字段（用于扫描件）
             if pdf_data.get("source") == "ocr":
-                # 截止日期
-                if pdf_data.get("deadline"):
-                    # 检查是否已有截止日期字段
+                # 检测是否为 NOA（中标通知书）
+                import re as _re
+                ocr_text = pdf_data.get("ocr_text", "")
+                is_noa = bool(
+                    _re.search(
+                        r"NOTIFICATION\s*OF\s*AWARD|Notification\s*of\s*Award",
+                        ocr_text,
+                    )
+                ) or tender.is_noa()
+
+                # 金额字段标签：NOA 用"合同金额"，普通标讯用"标书价格"
+                price_label = "合同金额" if is_noa else "标书价格"
+                security_label = "履约保证金" if is_noa else "投标保证金"
+
+                # 截止日期（NOA 不显示截止日期，已经中标了）
+                if pdf_data.get("deadline") and not is_noa:
                     has_deadline = any(
                         f.name in ("截止日期", "投标截止日期", "Deadline", "Closing Date")
                         for f in tender.fields
                     )
                     if not has_deadline:
-                        insert_pos = 2
                         tender.fields.insert(
-                            insert_pos,
+                            2,
                             TenderField("截止日期", _format_date_for_display(pdf_data["deadline"])),
                         )
 
-                # 标书价格
+                # 价格
                 if pdf_data.get("bdt_amount") or pdf_data.get("usd_amount"):
                     price_parts = []
                     if pdf_data.get("bdt_amount"):
                         price_parts.append(f"BDT {pdf_data['bdt_amount']}")
                     if pdf_data.get("usd_amount"):
                         price_parts.append(f"USD {pdf_data['usd_amount']}")
-                    tender.fields.insert(3, TenderField("标书价格", " / ".join(price_parts)))
+                    tender.fields.insert(3, TenderField(price_label, " / ".join(price_parts)))
 
-                # 投标保证金
+                # 保证金/履约保证金
                 if pdf_data.get("security_usd"):
-                    tender.fields.insert(4, TenderField("投标保证金", pdf_data["security_usd"]))
+                    tender.fields.insert(4, TenderField(security_label, pdf_data["security_usd"]))
 
                 # 采购方式
                 if pdf_data.get("procurement_method"):
@@ -470,21 +482,46 @@ def _enrich_with_pdf(
                             )
                             break
 
-                # 更新 key 字段，包含截止日期和保证金
+                # 更新 key 和 special 字段
                 key_parts = []
-                if pdf_data.get("deadline"):
-                    key_parts.append(
-                        f"截止日期 <b>{_format_date_for_display(pdf_data['deadline'])}</b>"
+                if is_noa:
+                    key_parts.append("<b>已中标</b>")
+                    # 提取中标方名称
+                    contractor_match = _re.search(
+                        r"(?:CNPC|Sinopec|Petro|Halliburton|Schlumberger|Weatherford|Baker|[\w]+)\s[\w\s]+(?:Company|Ltd|Limited|Corp|Inc)",
+                        ocr_text,
                     )
-                if pdf_data.get("usd_amount") or pdf_data.get("bdt_amount"):
-                    price_parts = []
-                    if pdf_data.get("bdt_amount"):
-                        price_parts.append(f"BDT {pdf_data['bdt_amount']}")
-                    if pdf_data.get("usd_amount"):
-                        price_parts.append(f"USD {pdf_data['usd_amount']}")
-                    key_parts.append(f"标书价格 <b>{' / '.join(price_parts)}</b>")
-                if pdf_data.get("security_usd"):
-                    key_parts.append(f"保证金 <b>{pdf_data['security_usd']}</b>")
+                    if contractor_match:
+                        key_parts.append(
+                            f"中标方 <b>{contractor_match.group(0).strip()[:60]}</b>"
+                        )
+                    # 合同金额
+                    if pdf_data.get("usd_amount") or pdf_data.get("bdt_amount"):
+                        price_parts = []
+                        if pdf_data.get("bdt_amount"):
+                            price_parts.append(f"BDT {pdf_data['bdt_amount']}")
+                        if pdf_data.get("usd_amount"):
+                            price_parts.append(f"USD {pdf_data['usd_amount']}")
+                        key_parts.append(
+                            f"合同金额 <b>{' / '.join(price_parts)}</b>"
+                        )
+                    if pdf_data.get("security_usd"):
+                        key_parts.append(f"履约保证金 <b>{pdf_data['security_usd']}</b>")
+                else:
+                    if pdf_data.get("deadline"):
+                        key_parts.append(
+                            f"截止日期 <b>{_format_date_for_display(pdf_data['deadline'])}</b>"
+                        )
+                    if pdf_data.get("usd_amount") or pdf_data.get("bdt_amount"):
+                        price_parts = []
+                        if pdf_data.get("bdt_amount"):
+                            price_parts.append(f"BDT {pdf_data['bdt_amount']}")
+                        if pdf_data.get("usd_amount"):
+                            price_parts.append(f"USD {pdf_data['usd_amount']}")
+                        key_parts.append(f"标书价格 <b>{' / '.join(price_parts)}</b>")
+                    if pdf_data.get("security_usd"):
+                        key_parts.append(f"保证金 <b>{pdf_data['security_usd']}</b>")
+
                 # 保留来源信息
                 for f in tender.fields:
                     if f.name == "发布日期":
@@ -494,9 +531,21 @@ def _enrich_with_pdf(
                 tender.key = " | ".join(key_parts)
 
                 # 更新 special 字段
-                special_parts = ["<b>从官网实时爬取（OCR解析PDF）</b>"]
-                if pdf_data.get("project_name"):
-                    special_parts.append(f"项目: {pdf_data['project_name'][:100]}")
+                if is_noa:
+                    special_parts = ["<b>从官网实时爬取（OCR解析PDF）</b>"]
+                    # 提取中标方完整名称
+                    contractor_match = _re.search(
+                        r"\n([A-Z][A-Za-z\s.,&]+(?:Company|Ltd|Limited|Corp|Inc|Corporation))",
+                        ocr_text,
+                    )
+                    if contractor_match:
+                        contractor = contractor_match.group(1).strip()[:100]
+                        special_parts.append(f"中标方: {contractor}")
+                    special_parts.append("该标讯已中标，仅供信息参考")
+                else:
+                    special_parts = ["<b>从官网实时爬取（OCR解析PDF）</b>"]
+                    if pdf_data.get("project_name"):
+                        special_parts.append(f"项目: {pdf_data['project_name'][:100]}")
                 tender.special = " | ".join(special_parts)
 
             # 处理非扫描 PDF（原有逻辑 + 增强字段提取）
@@ -660,10 +709,9 @@ def _enrich_with_detail_page(
                 elif "EOI" in tender.title.upper():
                     tender_type = "意向书征集"
 
-            # 更新 key 字段，包含类型和来源（保留OCR已提取的截止日期/保证金）
+            # 更新 key 字段，保留 OCR / PDF 已提取的关键信息
             existing_key_parts = []
             has_ocr_deadline = False
-            # 检查是否已有OCR提取的关键信息
             for f in tender.fields:
                 if f.name == "截止日期":
                     existing_key_parts.append(f"截止日期 <b>{f.value}</b>")
@@ -672,8 +720,14 @@ def _enrich_with_detail_page(
                 if f.name == "投标保证金" and f.value not in str(existing_key_parts):
                     existing_key_parts.append(f"保证金 <b>{f.value}</b>")
             for f in tender.fields:
+                if f.name == "履约保证金" and f.value not in str(existing_key_parts):
+                    existing_key_parts.append(f"履约保证金 <b>{f.value}</b>")
+            for f in tender.fields:
                 if f.name == "标书价格" and f.value not in str(existing_key_parts):
                     existing_key_parts.append(f"标书价格 <b>{f.value}</b>")
+            for f in tender.fields:
+                if f.name == "合同金额" and f.value not in str(existing_key_parts):
+                    existing_key_parts.append(f"合同金额 <b>{f.value}</b>")
 
             type_info = f"类型: <b>{tender_type}</b>" if tender_type else ""
             pub_info = ""
@@ -684,31 +738,41 @@ def _enrich_with_detail_page(
             key_parts = [p for p in [type_info] + existing_key_parts + [pub_info, f"来源: {company}"] if p]
             tender.key = " | ".join(key_parts)
 
-            # 更新 special 字段
-            special_parts = ["<b>从官网实时爬取</b>"]
+            # 更新 special 字段（保留 OCR 对 NOA 的设置）
+            is_noa = tender.is_noa()
+            if is_noa and "已中标" in (tender.special or ""):
+                # OCR 已设置 NOA special，只补充存档日期
+                archive_raw = raw_fields.get("আর্কাইভ তারিখ", "")
+                if archive_raw:
+                    from src.scraper import _parse_date
+                    archive_dt = _parse_date(archive_raw)
+                    if archive_dt and archive_dt.year < 2030:
+                        tender.special += f" | 存档日期: {archive_dt.strftime('%Y-%m-%d')}"
+            else:
+                special_parts = ["<b>从官网实时爬取</b>"]
 
-            # 存档日期（过滤掉明显占位日期如 2030-12-31）
-            archive_raw = raw_fields.get("আর্কাইভ তারিখ", "")
-            if archive_raw:
-                from src.scraper import _parse_date
-                archive_dt = _parse_date(archive_raw)
-                if archive_dt and archive_dt.year < 2030:
-                    special_parts.append(f"存档日期: {archive_dt.strftime('%Y-%m-%d')}")
+                # 存档日期（过滤掉明显占位日期如 2030-12-31）
+                archive_raw = raw_fields.get("আর্কাইভ তারিখ", "")
+                if archive_raw:
+                    from src.scraper import _parse_date
+                    archive_dt = _parse_date(archive_raw)
+                    if archive_dt and archive_dt.year < 2030:
+                        special_parts.append(f"存档日期: {archive_dt.strftime('%Y-%m-%d')}")
 
-            # 项目名称（来自OCR）
-            for f in tender.fields:
-                if f.name == "项目名称" and len(f.value) > 5:
-                    special_parts.append(f"项目: {f.value[:120]}")
-                    break
+                # 项目名称（来自OCR）
+                for f in tender.fields:
+                    if f.name == "项目名称" and len(f.value) > 5:
+                        special_parts.append(f"项目: {f.value[:120]}")
+                        break
 
-            # 投标资格摘要
-            for f in tender.fields:
-                if f.name == "投标资格" and len(f.value) > 5:
-                    qualified = f.value[:100].replace('\n', ' ')
-                    special_parts.append(f"资格: {qualified}")
-                    break
+                # 投标资格摘要
+                for f in tender.fields:
+                    if f.name == "投标资格" and len(f.value) > 5:
+                        qualified = f.value[:100].replace('\n', ' ')
+                        special_parts.append(f"资格: {qualified}")
+                        break
 
-            tender.special = " | ".join(special_parts)
+                tender.special = " | ".join(special_parts)
 
             # ---- 4. 补充详细描述和采购内容 ----
             detail = ""
