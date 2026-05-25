@@ -854,8 +854,206 @@ def _parse_deadline(text: str) -> Optional[datetime]:
     return None
 
 
+def _ocr_pdf_bytes(pdf_bytes: bytes, dpi: int = 250) -> Optional[str]:
+    """对 PDF 字节进行 OCR 文字识别。
+
+    Args:
+        pdf_bytes: PDF 文件字节内容
+        dpi: 渲染分辨率
+
+    Returns:
+        OCR 识别文本或 None
+    """
+    try:
+        import io as _io
+
+        import fitz
+        from PIL import Image
+
+        import pytesseract
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        texts = []
+        for page_num in range(min(doc.page_count, 5)):  # 最多处理5页
+            page = doc[page_num]
+            # 先尝试直接提取文本
+            native = page.get_text().strip()
+            if native and len(native) > 50:
+                texts.append(native)
+                continue
+            # 渲染为图片做 OCR
+            pix = page.get_pixmap(dpi=dpi)
+            img = Image.open(_io.BytesIO(pix.tobytes("png")))
+            ocr_text = pytesseract.image_to_string(img, lang="eng")
+            if ocr_text.strip():
+                texts.append(ocr_text)
+        doc.close()
+        return "\n".join(texts) if texts else None
+    except ImportError as e:
+        logger.warning(f"OCR 依赖缺失: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"OCR 识别失败: {e}")
+        return None
+
+
+def _extract_ocr_fields(text: str) -> Dict[str, Any]:
+    """从 OCR 文本中提取标讯关键字段。
+
+    Args:
+        text: OCR 识别文本
+
+    Returns:
+        提取的字段字典
+    """
+    result: Dict[str, Any] = {}
+    # 规范化空格
+    clean = re.sub(r"\s+", " ", text)
+
+    # ---- 截止日期 (Tender Closing Date and Time) ----
+    # OCR 中日期和时间之间可能有 | 或多种分隔符
+    closing_patterns = [
+        r"Tender\s*Closing\s*Date\s*(?:and|&)\s*Time[:\s|]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*\|?\s*(\d{1,2}[.:]\d{2})",
+        r"Closing\s*Date\s*(?:and|&)\s*Time[:\s|]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*\|?\s*(\d{1,2}[.:]\d{2})",
+        r"Closing\s*Date[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*\|?\s*(\d{1,2}[.:]\d{2})",
+        r"Tender\s*Closing\s*Date[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*\|?\s*(\d{1,2}[.:]\d{2})",
+    ]
+    for pattern in closing_patterns:
+        m = re.search(pattern, clean, re.IGNORECASE)
+        if m:
+            date_str = m.group(1)
+            time_str = m.group(2) if m.lastindex and m.lastindex >= 2 else "00:00"
+            # OCR 常用点号代替冒号
+            time_str = time_str.replace(".", ":")
+            dt = _parse_date(f"{date_str} {time_str}")
+            if dt:
+                result["deadline"] = dt.isoformat()
+            break
+
+    # ---- 标书价格 (Price of Tender Document) ----
+    price_match = re.search(
+        r"Price\s*(?:of|:)?\s*Tender\s*Document[:\s]*.*?(BDT\s*[\d,]+(?:[.]\d{2})?).*?(USD\s*[\d,]+(?:[.]\d{2})?)",
+        clean, re.IGNORECASE,
+    )
+    if price_match:
+        if price_match.group(1):
+            result["bdt_amount"] = re.sub(r"[^\d.]", "", price_match.group(1))
+        if price_match.lastindex and price_match.lastindex >= 2 and price_match.group(2):
+            result["usd_amount"] = re.sub(r"[^\d.]", "", price_match.group(2))
+
+    # ---- 投标保证金 (Tender Security) ----
+    security_match = re.search(
+        r"Tender\s*Security[:\s]*.*?(USD\s*[\d,]+(?:[.]\d{2})?)",
+        clean, re.IGNORECASE,
+    )
+    if security_match:
+        result["security_usd"] = security_match.group(1).strip()
+
+    # ---- 招标编号 ----
+    tn_patterns = [
+        r"(?:Invitation|Tender)\s*Ref\s*No[.:\s#]*([A-Z0-9/()\-]+(?:/\d{4})?)",
+        r"(?:Tender|Invitation)\s*(?:Ref|Reference)\s*(?:No|Number)?[.:\s#]*([A-Z0-9/()\-]+(?:/\d{4})?)",
+        r"Tender\s*(?:Package\s*)?No[.:\s#]*-?[.:\s#]*([A-Z0-9/()\-]+(?:/\d{4})?)",
+    ]
+    for pattern in tn_patterns:
+        m = re.search(pattern, clean, re.IGNORECASE)
+        if m:
+            candidate = m.group(1).strip()
+            # 过滤掉明显的误匹配（如 "No"、"FUNDING" 等）
+            if candidate.upper() not in ("NO", "FUNDING", "INFORMATION", "KEY", "DATE", "TIME"):
+                result["tender_no_from_pdf"] = candidate
+                break
+
+    # ---- 采购方式 ----
+    method_match = re.search(
+        r"Procurement\s*Method[:\s]*(.{5,80}?)(?:\s*\d+\s*\||\s*FUNDING|\s*\n\s*\d)",
+        clean, re.IGNORECASE,
+    )
+    if method_match:
+        method = method_match.group(1).strip()
+        # 清理 OCR 噪音
+        method = re.sub(r"\s{2,}", " ", method)
+        method = re.sub(r"^\[?_?", "", method)  # 去掉 OCR 伪影
+        if len(method) > 5 and "FUNDING" not in method[:50]:
+            result["procurement_method"] = method[:200]
+
+    # ---- 投标资格 (Eligibility): 查找有实质资格要求的段落 ----
+    # 策略1：从 "Brief Eligibility" 或 "qualification" 关键词后的英文段落
+    elig_match = re.search(
+        r"(?:Brief\s*Eligibility[^.]*?\.|qualification\s*(?:of|criteria))[:\s]*(.{30,400}?)(?:\s*\d+\s*[|_]\s*|\s*Price\s*of\s*Tender)",
+        clean, re.IGNORECASE,
+    )
+    if elig_match:
+        elig_text = elig_match.group(1).strip()
+        # 清理
+        elig_text = re.sub(r"^\s*[°•▪▸]\s*", "", elig_text)  # 去掉开头符号
+        elig_text = re.sub(r"^of\s+", "", elig_text)  # 去掉开头 of
+        elig_text = re.sub(r"The\s*minimum\s*of\s*years\b", "The minimum years", elig_text)
+        if len(elig_text) > 20:
+            result["eligibility"] = elig_text[:400]
+    else:
+        # 策略2：找包含 experience/track record 的段落
+        elig_match2 = re.search(
+            r"(?:experience|track\s*record).{30,300}?(?:years?\.|experience\.)",
+            clean, re.IGNORECASE,
+        )
+        if elig_match2:
+            elig_text = elig_match2.group(0).strip()[:400]
+            if "As per Tender Document" not in elig_text:
+                result["eligibility"] = elig_text
+
+    # ---- 投标有效期 ----
+    validity_match = re.search(
+        r"(?:Tender|Bid)\s*Validity\s*(?:Period)?[:\s]*(\d+)\s*(?:days|Days)",
+        clean, re.IGNORECASE,
+    )
+    if validity_match:
+        result["validity_days"] = int(validity_match.group(1))
+
+    # ---- 交货期/合同期 ----
+    completion_match = re.search(
+        r"Completion\s*(?:Time|Period)[:\s/]*.*?(\d+)\s*(?:\([^)]*\))?\s*(?:months|Months|days|Days)",
+        clean, re.IGNORECASE,
+    )
+    if completion_match:
+        result["completion_time"] = completion_match.group(0).strip()[:100]
+
+    # ---- 联系人 ----
+    name_match = re.search(
+        r"Name\s*of\s*Official\s*(?:Inviting\s*Tender)?[:\s]*([A-Z][a-z]+(?:\s+[A-Z][a-z.]+)+)",
+        clean,
+    )
+    if name_match:
+        person = name_match.group(1).strip()
+        # 清理多余的 OCR 噪音词
+        for noise in ("Inviting Tender", "Designation", "Address"):
+            person = person.replace(noise, "").strip()
+        if person:
+            result["contact_person"] = person
+
+    # ---- 项目名称 ----
+    proj_match = re.search(
+        r"Project\s*Name[:\s]*(.{10,200}?)(?:Tender\s*Package|Tender\s*Publication|\d+\s*[|_])",
+        clean, re.IGNORECASE,
+    )
+    if proj_match:
+        proj = proj_match.group(1).strip()
+        if len(proj) > 10:
+            result["project_name"] = proj[:300]
+
+    # ---- 标书发售截止 ----
+    selling_match = re.search(
+        r"(?:Tender\s*)?Last\s*Selling\s*Date[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})",
+        clean, re.IGNORECASE,
+    )
+    if selling_match:
+        result["last_selling_date"] = selling_match.group(1).strip()
+
+    return result
+
+
 def parse_pdf_fields(pdf_url: str) -> Dict[str, Any]:
-    """解析单个 PDF 文件，提取关键字段。
+    """解析单个 PDF 文件，提取关键字段（含 OCR 回退）。
 
     Args:
         pdf_url: PDF 文件 URL
@@ -870,17 +1068,27 @@ def parse_pdf_fields(pdf_url: str) -> Dict[str, Any]:
         result["error"] = "下载失败"
         return result
 
-    if _is_scanned_pdf(pdf_bytes):
-        result["is_scanned"] = True
-        return result
+    is_scanned = _is_scanned_pdf(pdf_bytes)
+    result["is_scanned"] = is_scanned
 
     raw_text = _extract_pdf_text(pdf_bytes)
-    if not raw_text:
-        result["error"] = "文本提取失败"
+
+    # 扫描件或无文本 → 尝试 OCR
+    if is_scanned or not raw_text:
+        ocr_text = _ocr_pdf_bytes(pdf_bytes)
+        if ocr_text:
+            result["ocr_text"] = ocr_text[:8000]
+            ocr_fields = _extract_ocr_fields(ocr_text)
+            result.update(ocr_fields)
+            if ocr_fields:
+                result["source"] = "ocr"
+                return result
+
+        result["error"] = "OCR 识别失败" if is_scanned else "文本提取失败"
         return result
 
     cleaned = _clean_pdf_text(raw_text)
-    result["raw_text"] = cleaned[:5000]  # 保留前5000字符供调试
+    result["raw_text"] = cleaned[:5000]
 
     # 金额
     amounts = _parse_money_amounts(cleaned)
