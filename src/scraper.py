@@ -1102,21 +1102,36 @@ def _extract_ocr_fields(text: str) -> Dict[str, Any]:
             result["contact_person"] = person
 
     # ---- EOI 专属: 任务简述 (Brief description of assignment) ----
-    eoi_desc_match = re.search(
-        r"Brief\s*description\s*of\s*assignment[:\s]*(.{30,800}?)(?:Experience,?\s*resources|Others\s*details|\n\s*\n\s*[A-Z][a-z])",
-        clean, re.IGNORECASE | re.DOTALL,
-    )
-    if not eoi_desc_match:
-        # 备选: 搜索 EOI 标题后的描述
+    # EOI 表格列布局导致标签和值距离很远，需要智能查找实际描述段落
+    eoi_desc = ""
+    # 策略1：找 "plans to carry out" 或 "aiming to" 开头的描述段
+    for kw in ["plans to carry out", "aiming to", "intends to", "scope of work", "objective"]:
+        idx = clean.lower().find(kw)
+        if idx >= 0:
+            # 往前找句子开头，往后取到段落结束
+            start = max(0, idx - 100)
+            segment = clean[start : idx + 600]
+            # 提取从合理句子开头开始的描述
+            sentence_match = re.search(
+                r"([A-Z][^.]{50,500}?(?:\.\s|[.]\s*\n|\Z))",
+                segment, re.DOTALL,
+            )
+            if sentence_match:
+                desc = " ".join(sentence_match.group(1).split())
+                if len(desc) > 50:
+                    eoi_desc = desc
+                    break
+    # 策略2：回退到标签-值匹配
+    if not eoi_desc:
         eoi_desc_match = re.search(
-            r"(?:Title\s*of\s*Service|Expression\s*of\s*interest\s*for)[:\s]*(.{30,500}?)(?:EOI\s*Ref|Date|\n\s*\n)",
+            r"Brief\s*description\s*of\s*assignment[:\s]*(.{30,800}?)(?:Experience,?\s*resources|Others\s*details|\n\s*\n\s*[A-Z][a-z])",
             clean, re.IGNORECASE | re.DOTALL,
         )
-    if eoi_desc_match:
-        desc = eoi_desc_match.group(1).strip()
-        desc = " ".join(desc.split())
-        if len(desc) > 20:
-            result["eoi_description"] = desc[:500]
+        if eoi_desc_match:
+            eoi_desc = " ".join(eoi_desc_match.group(1).split())
+    # 过滤太短或明显是标签文本的结果
+    if eoi_desc and len(eoi_desc) > 50 and "resources and delivery" not in eoi_desc[:60]:
+        result["eoi_description"] = eoi_desc[:500]
 
     # ---- EOI 专属: 资格 (Experience, resources and delivery capacity) ----
     eoi_elig_match = re.search(

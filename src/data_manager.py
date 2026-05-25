@@ -437,9 +437,13 @@ def _enrich_with_pdf(
                 if pdf_data.get("security_usd"):
                     tender.fields.insert(4, TenderField(security_label, pdf_data["security_usd"]))
 
-                # 采购方式
+                # 采购方式（清理OCR噪音）
                 if pdf_data.get("procurement_method"):
-                    tender.fields.insert(5, TenderField("采购方式", pdf_data["procurement_method"]))
+                    method = pdf_data["procurement_method"]
+                    # 去掉尾部OCR噪音字符
+                    method = _re.sub(r"[+\-_|]+$", "", method.strip())
+                    method = _re.sub(r"\s+FUNDING\s*INFORMATION.*$", "", method, flags=_re.IGNORECASE)
+                    tender.fields.insert(5, TenderField("采购方式", method[:200]))
 
                 # 投标有效期
                 if pdf_data.get("validity_days"):
@@ -487,9 +491,18 @@ def _enrich_with_pdf(
                     ):
                         tender.title = new_title[:200]
 
-                # 项目名称
+                # 项目名称（清理OCR噪音）
                 if pdf_data.get("project_name"):
-                    tender.fields.insert(10, TenderField("项目名称", pdf_data["project_name"]))
+                    proj = pdf_data["project_name"]
+                    # 截断在OCR噪音标记处
+                    for noise in ["“ender", "Tender Package", "Package No", "\n\d+\s*[|_]", " 13 "]:
+                        m = _re.search(noise, proj)
+                        if m and m.start() > 20:
+                            proj = proj[: m.start()].strip()
+                            break
+                    # 过滤纯噪音
+                    if len(proj) > 10 and not proj.startswith(", assignment"):
+                        tender.fields.insert(10, TenderField("项目名称", proj[:300]))
 
                 # 标书发售截止
                 if pdf_data.get("last_selling_date"):
@@ -616,10 +629,16 @@ def _enrich_with_pdf(
                 if avail_match:
                     tender.fields.insert(6, TenderField("标书可获取日期", avail_match.group(1).strip()))
 
-                # 更新 key
-                if pdf_data.get("USD") and "标书价格" not in tender.key and "合同金额" not in tender.key:
+                # 更新 key（补充价格信息）
+                existing_key = tender.key
+                if pdf_data.get("USD") and "USD" not in existing_key:
                     price_label = "投标文件价格" if is_bid_doc else "合同金额"
-                    tender.key = f"{price_label} <b>USD {pdf_data['USD']}</b> | {tender.key}"
+                    existing_key = f"{price_label} <b>USD {pdf_data['USD']}</b> | {existing_key}"
+                if pdf_data.get("BDT") and "BDT" not in existing_key:
+                    price_label = "投标文件价格" if is_bid_doc else "合同金额"
+                    existing_key = f"{price_label} <b>BDT {pdf_data['BDT']}</b> | {existing_key}"
+                if existing_key != tender.key:
+                    tender.key = existing_key
 
                 # 提取采购内容描述（非扫描PDF，用于替代孟加拉语/空标题）
                 procurement_match = _re.search(
@@ -659,10 +678,13 @@ def _enrich_with_pdf(
                     desc = _re.sub(r"([a-z])(\d)", r"\1 \2", desc)  # letter+digit
                     desc = _re.sub(r",(\S)", r", \1", desc)  # comma without space
                     desc = _re.sub(r"&(\S)", r"& \1", desc)  # ampersand without space
-                    desc = _re.sub(r"([a-z])of([A-Z])", r"\1 of \2", desc)  # merged 'of'
-                    # 去掉开头多余的 "of " 或 "of"
-                    desc = _re.sub(r"^of\s+", "", desc)
+                    desc = _re.sub(r"([a-z])(of)([A-Z])", r"\1 \2 \3", desc)  # merged 'of'+Capital
+                    desc = _re.sub(r"([a-z])(of)(\s)", r"\1 \2\3", desc)  # already ok: 'xof ' stays
+                    desc = _re.sub(r"([a-z])of\s", r"\1 of ", desc)  # Capacitiesof → Capacities of
+                    desc = _re.sub(r"s([A-Z])", r"s \1", desc)  # plural-then-capital
+                    desc = _re.sub(r"^of\s+", "", desc)  # leading 'of '
                     desc = _re.sub(r";\s*", " ", desc)  # stray semicolons
+                    desc = _re.sub(r"\s+", " ", desc)  # normalize whitespace
                     if len(desc) > 10:
                         for fi, f in enumerate(tender.fields):
                             if f.name == "采购内容":
@@ -817,6 +839,9 @@ def _enrich_with_detail_page(
             for f in tender.fields:
                 if f.name == "合同金额" and f.value not in str(existing_key_parts):
                     existing_key_parts.append(f"合同金额 <b>{f.value}</b>")
+            for f in tender.fields:
+                if "投标文件价格" in f.name and f.value not in str(existing_key_parts):
+                    existing_key_parts.append(f"投标文件价格 <b>{f.value}</b>")
 
             type_info = f"类型: <b>{tender_type}</b>" if tender_type else ""
             pub_info = ""
