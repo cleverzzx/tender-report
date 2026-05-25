@@ -216,6 +216,14 @@ class PDFGenerator:
             渲染后的下一个全局序号
         """
         if not tender_list:
+            story.append(Paragraph(section_title, self.styles["section"]))
+            story.append(
+                Paragraph(
+                    "<i>暂无进行中的国际招标标讯</i>",
+                    self.styles["summary"],
+                )
+            )
+            story.append(Spacer(1, 15))
             return start_index
 
         story.append(Paragraph(section_title, self.styles["section"]))
