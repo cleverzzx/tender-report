@@ -811,7 +811,7 @@ def _parse_money_amounts(text: str) -> Dict[str, str]:
     amounts: Dict[str, str] = {}
     # 孟加拉金额格式（lakh/crore）
     money_pattern = re.compile(
-        r"(USD|BDT|US\s*Doll[ae]r|Bangladeshi\s*Taka)\s+"
+        r"(USD|US\$|BDT|US\s*Doll[ae]r|Bangladeshi\s*Taka)\s+"
         r"([\d,]+\.?\d*)",
         re.IGNORECASE,
     )
@@ -843,11 +843,15 @@ def _parse_deadline(text: str) -> Optional[datetime]:
         r"(?:closing|deadline|submission)\s*date[:\s]+(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
         # "not later than 18 May 2026"
         r"not\s+later\s+than\s+(\d{1,2}\s+\w+\s+\d{4})",
+        # "not later than 1:00 pm BST on 30th November 2026" (Petrobangla)
+        r"not\s+later\s+than\s+(?:\d{1,2}:\d{2}\s*(?:am|pm|a\.m\.|p\.m\.)\s*(?:\w+\s+)?(?:on|of)\s+)?(\d{1,2}(?:st|nd|rd|th)?\s+\w+\s+\d{4})",
     ]
     for pattern in patterns:
         m = re.search(pattern, text, re.IGNORECASE)
         if m:
             date_str = m.group(1)
+            # 去掉英文序数词后缀 (1st, 2nd, 3rd, 4th...)
+            date_str = re.sub(r"(\d+)(?:st|nd|rd|th)\b", r"\1", date_str)
             dt = _parse_date(date_str)
             if dt:
                 return dt
@@ -932,22 +936,30 @@ def _extract_ocr_fields(text: str) -> Dict[str, Any]:
 
     # ---- 标书价格 (Price of Tender Document) ----
     price_match = re.search(
-        r"Price\s*(?:of|:)?\s*Tender\s*Document[:\s]*.*?(BDT\s*[\d,]+(?:[.]\d{2})?).*?(USD\s*[\d,]+(?:[.]\d{2})?)",
+        r"Price\s*(?:of|:)?\s*(?:Tender|Bidding)\s*(?:Document|Package)?[:\s]*.*?(BDT|US\$?|USD)\s*([\d,]+(?:[.]\d{2})?)",
         clean, re.IGNORECASE,
     )
+    if not price_match:
+        # 备用：匹配 "cost of US$ 7,000" 格式
+        price_match = re.search(
+            r"(?:cost|price)\s*(?:of|:)?\s*(BDT|US\$?|USD)\s*([\d,]+(?:[.]\d{2})?)",
+            clean, re.IGNORECASE,
+        )
     if price_match:
-        if price_match.group(1):
-            result["bdt_amount"] = re.sub(r"[^\d.]", "", price_match.group(1))
-        if price_match.lastindex and price_match.lastindex >= 2 and price_match.group(2):
-            result["usd_amount"] = re.sub(r"[^\d.]", "", price_match.group(2))
+        currency = price_match.group(1).upper().replace("$", "D")
+        value = re.sub(r"[^\d.]", "", price_match.group(2))
+        if "USD" in currency and value:
+            result["usd_amount"] = value
+        elif "BDT" in currency and value:
+            result["bdt_amount"] = value
 
-    # ---- 投标保证金 (Tender Security) ----
+    # ---- 投标保证金 (Tender Security / Bid Bond) ----
     security_match = re.search(
-        r"Tender\s*Security[:\s]*.*?(USD\s*[\d,]+(?:[.]\d{2})?)",
+        r"(?:Tender\s*Security|Bid\s*Bond|Bank\s*Guarantee)[:\s]*.*?(US\$?|USD)\s*([\d,]+(?:[.]\d{2})?)",
         clean, re.IGNORECASE,
     )
     if security_match:
-        result["security_usd"] = security_match.group(1).strip()
+        result["security_usd"] = f"USD {re.sub(r'[^\d.]', '', security_match.group(2))}"
 
     # ---- 招标编号 ----
     tn_patterns = [

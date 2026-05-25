@@ -54,6 +54,10 @@ class PDFGenerator:
             "Sylhet Gas Fields Limited (SGFL) 国际招标",
             "SGFL",
         ),
+        (
+            "Petrobangla 国际招标",
+            "Petrobangla",
+        ),
     ]
 
     def __init__(self, chinese_font: Optional[str] = None) -> None:
@@ -367,7 +371,7 @@ class PDFGenerator:
         self._render_summary(story, tenders, validation_date)
 
         # 各公司标讯（动态章节编号 + 全局连续序号）
-        chinese_nums = ["二", "三", "四"]
+        chinese_nums = ["二", "三", "四", "五"]
         section_idx = 0
         global_index = 0
         for section_title, company_key in self.COMPANY_SECTIONS:

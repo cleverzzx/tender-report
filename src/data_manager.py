@@ -42,6 +42,7 @@ def _is_international(tender_type: str, title: str = "") -> bool:
     # 国际标讯关键词（英文 + 孟加拉语）
     intl_keywords = [
         "INTERNATIONAL", "FOREIGN", "NOA", "EOI", "EXPRESSION OF INTEREST",
+        "OFFSHORE", "BIDDING ROUND", "PRE-QUALIFICATION", "ICB",
         "আন্তর্জাতিক",  # 国际
         "আন্তজার্তিক",  # 国际（变体）
         "বৈদেশিক",      # 外国/海外
@@ -808,7 +809,7 @@ def _merge_tenders(
     }
 
     merged: Dict[str, List[Tender]] = {}
-    for company in ["BAPEX", "BGFCL", "SGFL"]:
+    for company in ["BAPEX", "BGFCL", "SGFL", "Petrobangla"]:
         company_tenders = fallback_tenders.get(company, []).copy()
         existing_urls = {t._url for t in company_tenders if t._url}
         existing_titles = [t.title.lower() for t in company_tenders]
@@ -819,9 +820,13 @@ def _merge_tenders(
             if target == company:
                 company_scraped.extend(entries)
             elif target is None:
+                # Petrobangla source: infer company
                 for entry in entries:
                     inferred = _infer_company_from_entry(entry)
                     if inferred == company:
+                        company_scraped.append(entry)
+                    elif inferred is None and company == "Petrobangla":
+                        # 无法推断公司且目标是Petrobangla → 纳入Petrobangla
                         company_scraped.append(entry)
 
         # 过滤本地标讯
@@ -1001,7 +1006,7 @@ def _infer_company_from_entry(entry: ScrapedEntry) -> Optional[str]:
 def _sort_by_publish_date(tenders: Dict[str, List[Tender]]) -> Dict[str, List[Tender]]:
     """按发布日期倒序排列。"""
     sorted_tenders: Dict[str, List[Tender]] = {}
-    for company in ["BAPEX", "BGFCL", "SGFL"]:
+    for company in ["BAPEX", "BGFCL", "SGFL", "Petrobangla"]:
         if company in tenders:
             company_tenders = tenders[company]
             company_tenders.sort(

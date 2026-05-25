@@ -56,7 +56,7 @@ def main() -> int:
     tenders, new_count, stats = get_tender_data(try_scrape=True)
     total = sum(len(v) for v in tenders.values())
     print(f"      ✓ 共 {total} 条标讯")
-    for company in ["BAPEX", "BGFCL", "SGFL"]:
+    for company in ["BAPEX", "BGFCL", "SGFL", "Petrobangla"]:
         count = len(tenders.get(company, []))
         print(f"        {company}: {count} 条")
 
