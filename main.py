@@ -6,7 +6,10 @@
 """
 
 import logging
-from datetime import datetime
+import os
+import re
+from datetime import datetime, timedelta
+from pathlib import Path
 
 from src.urls import OFFICIAL_URLS
 from src.cli import parse_args
@@ -70,6 +73,9 @@ def main() -> int:
     )
     print(f"      ✓ PDF已生成: {output_path}")
 
+    # 清理旧报告（保留今天和昨天的）
+    _cleanup_old_reports(args.output_dir or "reports")
+
     # 邮件推送
     if not args.no_email:
         print("\n[邮件] 正在发送邮件...")
@@ -87,6 +93,34 @@ def main() -> int:
 
     logger.info("=== 标讯报告生成完成 ===")
     return 0
+
+
+def _cleanup_old_reports(report_dir: str) -> None:
+    """清理旧报告，只保留今天和昨天的PDF。"""
+    try:
+        today = datetime.now().date()
+        yesterday = today - timedelta(days=1)
+        keep_prefixes = {
+            today.strftime("%Y%m%d"),
+            yesterday.strftime("%Y%m%d"),
+        }
+
+        report_path = Path(report_dir)
+        if not report_path.exists():
+            return
+
+        deleted = 0
+        for f in report_path.glob("孟加拉标讯报告_*.pdf"):
+            # 从文件名提取日期: 孟加拉标讯报告_YYYYMMDD_HHMMSS.pdf
+            m = re.search(r"(\d{8})_", f.name)
+            if m and m.group(1) not in keep_prefixes:
+                f.unlink()
+                deleted += 1
+
+        if deleted > 0:
+            print(f"      ✓ 清理 {deleted} 个旧报告（保留{today}和{yesterday}）")
+    except Exception as e:
+        logger.warning(f"清理旧报告失败: {e}")
 
 
 if __name__ == "__main__":
