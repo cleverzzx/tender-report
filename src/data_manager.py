@@ -1287,6 +1287,92 @@ def get_tender_data(
         print(f"      ✓ 发现 {new_count} 条新增标讯")
         logger.info(f"发现 {new_count} 条新增标讯")
 
+    # 去重：合并同一公司内重复标讯（不同来源抓取到的同一招标）
+    merged_tenders = _deduplicate_tenders(merged_tenders)
+
     merged_tenders = _sort_by_publish_date(merged_tenders)
 
     return merged_tenders, new_count, stats
+
+
+def _deduplicate_tenders(
+    tenders: Dict[str, List[Tender]],
+) -> Dict[str, List[Tender]]:
+    """合并同一公司内不同来源抓取到的重复标讯。
+
+    匹配策略：
+    1. 招标编号精确匹配
+    2. 采购内容/标题包含相同的项目名称（如"3D Seismic Survey over Lamigaon"）
+    """
+    import difflib as _difflib
+
+    for company in list(tenders.keys()):
+        tlist = tenders[company]
+        if len(tlist) < 2:
+            continue
+
+        to_remove: set = set()
+        for i in range(len(tlist)):
+            if i in to_remove:
+                continue
+            for j in range(i + 1, len(tlist)):
+                if j in to_remove:
+                    continue
+                ti, tj = tlist[i], tlist[j]
+
+                # 策略1：招标编号相同
+                tn_i = ti.get_field_value("招标编号") or ""
+                tn_j = tj.get_field_value("招标编号") or ""
+                if tn_i and tn_j and tn_i == tn_j and tn_i not in ("未知（请查看详情页）", ""):
+                    is_dup = True
+                else:
+                    is_dup = False
+                    # 策略2：标题相似度 > 60%
+                    title_sim = _difflib.SequenceMatcher(None, ti.title.lower(), tj.title.lower()).ratio()
+                    if title_sim > 0.60 and len(ti.title) > 15 and len(tj.title) > 15:
+                        is_dup = True
+                    # 策略3：采购内容高度相似
+                    if not is_dup:
+                        proc_i = (ti.get_field_value("采购内容") or ti.title).lower()
+                        proc_j = (tj.get_field_value("采购内容") or tj.title).lower()
+                        if len(proc_i) > 30 and len(proc_j) > 30:
+                            sim = _difflib.SequenceMatcher(None, proc_i, proc_j).ratio()
+                            is_dup = sim > 0.60
+                    # 策略4：项目名称高度相似(>0.90)且至少一方无招标编号
+                    if not is_dup:
+                        proj_i = ti.get_field_value("项目名称") or ""
+                        proj_j = tj.get_field_value("项目名称") or ""
+                        no_tn = tn_i in ("未知（请查看详情页）", "") or tn_j in ("未知（请查看详情页）", "")
+                        if proj_i and proj_j and len(proj_i) > 10 and len(proj_j) > 10 and no_tn:
+                            proj_sim = _difflib.SequenceMatcher(None, proj_i.lower(), proj_j.lower()).ratio()
+                            is_dup = proj_sim > 0.85
+
+                if is_dup:
+                    # 合并：保留信息更丰富的那条，补充来源
+                    # 选择 fields 更多的
+                    if len(tj.fields) > len(ti.fields):
+                        tlist[i], tlist[j] = tlist[j], tlist[i]  # 把更丰富的换到i位置
+
+                    # 合并来源信息
+                    richer, poorer = tlist[i], tlist[j]
+                    sources = set()
+                    for t in (richer, poorer):
+                        for f in t.fields:
+                            if f.name == "官方来源":
+                                sources.add(f.value)
+                    if len(sources) > 1:
+                        richer.special += " | 同时发布于Petrobangla和SGFL官网"
+
+                    # 对于缺少的字段，从较弱的标讯补充
+                    for f_poor in poorer.fields:
+                        if not richer.get_field_value(f_poor.name) and f_poor.value and f_poor.value != "未知（请查看详情页）":
+                            richer.fields.append(TenderField(f_poor.name, f_poor.value))
+
+                    to_remove.add(j)
+                    logger.info(f"{company}: 合并重复标讯 '{richer.title[:60]}' 与 '{poorer.title[:60]}'")
+
+        if to_remove:
+            tenders[company] = [t for idx, t in enumerate(tlist) if idx not in to_remove]
+            print(f"      ~ {company}: 去重合并 {len(to_remove)} 条重复标讯")
+
+    return tenders

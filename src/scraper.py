@@ -840,6 +840,9 @@ def _parse_deadline(text: str) -> Optional[datetime]:
     patterns = [
         # "Closing Date: 18 May 2026"
         r"(?:Closing|Deadline|Submission)\s*Date[:\s]+(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
+        # "Date & time: May 18, 2026 up to 14:15 hrs" (BGFCL format)
+        r"Date\s*(?:&|and)\s*time[:\s]*(\w+\s+\d{1,2},?\s*\d{4})\s*(?:up\s*to|at)?\s*(\d{1,2}[.:]\d{2})",
+        r"Date\s*(?:&|and)\s*time[:\s]*(\d{1,2}\s+\w+\s*,?\s*\d{4})\s*(?:up\s*to|at)?\s*(\d{1,2}[.:]\d{2})",
         # "closing date: 18-05-2026"
         r"(?:closing|deadline|submission)\s*date[:\s]+(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
         # "not later than 18 May 2026"
@@ -941,7 +944,10 @@ def _extract_ocr_fields(text: str) -> Dict[str, Any]:
         r"Closing\s*Date\s*(?:and|&)\s*Time[:\s|]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*\|?\s*(\d{1,2}[.:]\d{2})",
         r"Closing\s*Date[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*\|?\s*(\d{1,2}[.:]\d{2})",
         r"Tender\s*Closing\s*Date[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*\|?\s*(\d{1,2}[.:]\d{2})",
-        # EOI 格式: 标签和日期可能被OCR排版分隔，用宽窗口
+        # BGFCL 格式: "Date & time: May 18, 2026 up to 14:15 hrs" (月-日-年 或 日-月-年)
+        r"Date\s*(?:&|and)\s*time[:\s]*(\w+\s+\d{1,2},?\s*\d{4})\s*(?:up\s*to|at)?\s*(\d{1,2}[.:]\d{2})",
+        r"Date\s*(?:&|and)\s*time[:\s]*(\d{1,2}\s+\w+\s*,?\s*\d{4})\s*(?:up\s*to|at)?\s*(\d{1,2}[.:]\d{2})",
+        # EOI 格式
         r"EOI\s*closing\s*date\s*(?:and|&)\s*time[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*(?:and|&)?\s*(\d{1,2}[.:]\d{2})",
     ]
     deadline_found = False
