@@ -14,17 +14,31 @@ from src.scraper import HEADERS, REQUEST_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
-# 能源新闻源
+# 能源新闻源（优先使用自带摘要的直接RSS）
 _NEWS_SOURCES = [
     {
-        "name": "孟加拉+国际能源",
-        "url": "https://news.google.com/rss/search?q=bangladesh+gas+petroleum+energy+LNG+oil&hl=en-US&gl=US&ceid=US:en",
-        "max_items": 6,
+        "name": "EnergyConnects",
+        "url": "https://www.energyconnects.com/rss",
+        "max_items": 4,
+        "type": "rss",
     },
     {
-        "name": "霍尔木兹+地缘政治",
-        "url": "https://news.google.com/rss/search?q=strait+of+hormuz+oil+tanker+middle+east+energy&hl=en-US&gl=US&ceid=US:en",
-        "max_items": 4,
+        "name": "WorldEnergyNews",
+        "url": "https://www.worldenergynews.com/rss",
+        "max_items": 3,
+        "type": "rss",
+    },
+    {
+        "name": "NaturalGasWorld",
+        "url": "https://www.naturalgasworld.com/rss",
+        "max_items": 3,
+        "type": "rss",
+    },
+    {
+        "name": "孟加拉能源",
+        "url": "https://news.google.com/rss/search?q=bangladesh+gas+petroleum+energy+LNG&hl=en-US&gl=US&ceid=US:en",
+        "max_items": 5,
+        "type": "google",
     },
 ]
 
@@ -42,14 +56,19 @@ class NewsItem:
         self.category_cn = ""  # 分类标签
 
     def to_html(self) -> str:
-        """转为 HTML 格式，中文标题 + 分类 + 来源"""
+        """转为 HTML 格式，中文标题 + 分类 + 来源 + 摘要"""
         display_title = self.title_cn if self.title_cn else self.title
         pub = f" ({self.published})" if self.published else ""
         cat = f" <font color='#1a365d'>[{self.category_cn}]</font>" if self.category_cn else ""
-        return (
-            f"• {cat} <a href='{self.url}' color='blue'>{display_title}</a> "
+        html = (
+            f"• {cat} <a href='{self.url}' color='blue'><b>{display_title}</b></a> "
             f"<font color='#6b7280'>— {self.source}{pub}</font><br/>"
         )
+        if self.desc_cn:
+            html += (
+                f"<font color='#374151' size='2'>　{self.desc_cn[:200]}</font><br/>"
+            )
+        return html
 
 
 def _categorize_news(item: NewsItem) -> str:
@@ -95,6 +114,15 @@ def _translate_items(items: List[NewsItem]) -> None:
             except Exception:
                 pass
 
+            # 翻译描述（真正的新闻摘要）
+            if item.description and len(item.description) > 40:
+                try:
+                    cn_desc = translator.translate(item.description[:250])
+                    if cn_desc and len(cn_desc) > 15:
+                        item.desc_cn = cn_desc
+                except Exception:
+                    pass
+
             # 分类
             item.category_cn = _categorize_news(item)
 
@@ -107,122 +135,96 @@ def _translate_items(items: List[NewsItem]) -> None:
 class NewsFetcher:
     """能源新闻抓取器"""
 
-    def fetch(self, max_total: int = 10) -> List[NewsItem]:
-        """抓取能源新闻。
-
-        Args:
-            max_total: 最多返回的总条数
-
-        Returns:
-            新闻列表
-        """
+    def fetch(self, max_total: int = 12) -> List[NewsItem]:
+        """抓取能源新闻（直接RSS提供摘要，Google News提供标题）。"""
         all_items: List[NewsItem] = []
         seen_titles: set = set()
 
-        for source in _NEWS_SOURCES:
+        for src in _NEWS_SOURCES:
             try:
-                items = self._fetch_rss(source["url"], source["max_items"])
+                if src.get("type") == "google":
+                    items = self._fetch_google_news(src["url"], src["max_items"])
+                else:
+                    items = self._fetch_direct_rss(src["url"], src["max_items"], src["name"])
+
                 for item in items:
                     title_key = item.title.lower()[:60]
                     if title_key not in seen_titles:
                         seen_titles.add(title_key)
                         all_items.append(item)
             except Exception as e:
-                logger.warning(f"新闻源 {source['name']} 抓取失败: {e}")
+                logger.warning(f"新闻源 {src['name']} 抓取失败: {e}")
                 continue
 
         return all_items[:max_total]
 
-    def _fetch_rss(self, url: str, max_items: int = 5) -> List[NewsItem]:
-        """从 RSS 源抓取新闻，尝试解析摘要和真实 URL。
-
-        Args:
-            url: RSS 源 URL
-            max_items: 最多返回条数
-
-        Returns:
-            新闻列表
-        """
+    def _fetch_direct_rss(self, url: str, max_items: int, source_name: str) -> List[NewsItem]:
+        """从直接 RSS 抓取（自带摘要）。"""
         try:
-            resp = requests.get(
-                url,
-                timeout=REQUEST_TIMEOUT,
-                headers=HEADERS,
-            )
-            resp.raise_for_status()
-        except requests.RequestException as e:
-            logger.warning(f"RSS 请求失败 {url}: {e}")
+            import feedparser
+            feed = feedparser.parse(url)
+        except Exception as e:
+            logger.warning(f"RSS 解析失败 {url}: {e}")
             return []
 
+        items: List[NewsItem] = []
+        for entry in feed.entries[:max_items]:
+            title = entry.get("title", "").strip()
+            link = entry.get("link", "")
+            desc = ""
+            # 提取摘要
+            for key in ("description", "summary", "content"):
+                val = entry.get(key, "")
+                if isinstance(val, list) and val:
+                    val = val[0].get("value", "")
+                clean = re.sub(r"<[^>]+>", "", str(val)).strip()
+                if len(clean) > 40:
+                    desc = clean[:400]
+                    break
+
+            if title and len(title) > 10:
+                items.append(NewsItem(
+                    title=title.rsplit(" - ", 1)[0].strip(),
+                    source=source_name,
+                    url=link,
+                    description=desc,
+                ))
+
+        return items
+
+    def _fetch_google_news(self, url: str, max_items: int) -> List[NewsItem]:
+        """从 Google News RSS 抓取（仅标题）。"""
         try:
+            resp = requests.get(url, timeout=REQUEST_TIMEOUT, headers=HEADERS)
+            resp.raise_for_status()
             root = ET.fromstring(resp.text)
-        except ET.ParseError as e:
-            logger.warning(f"RSS 解析失败 {url}: {e}")
+        except Exception as e:
+            logger.warning(f"Google News 失败: {e}")
             return []
 
         items: List[NewsItem] = []
         for item_elem in root.iter("item"):
             if len(items) >= max_items:
                 break
-
             title = ""
             link = ""
             source = ""
-            pub_date = ""
-            description = ""
-
             for child in item_elem:
-                tag = child.tag.lower() if "}" not in child.tag else child.tag.split("}")[-1]
+                tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
                 text = child.text or ""
-
                 if tag == "title":
                     title = text
                 elif tag == "link":
                     link = text
                 elif tag == "source":
                     source = text
-                elif tag == "description":
-                    clean = re.sub(r"<[^>]+>", "", text).strip()
-                    clean = re.sub(r"&nbsp;", " ", clean)
-                    clean = re.sub(r"&#(\d+);", " ", clean)
-                    # 过滤 Google News 重定向链接
-                    clean = re.sub(r"https?://news\.google\.com/\S+", "", clean)
-                    # 去掉与标题重复的部分
-                    if clean.lower().startswith(title.lower()[:30]):
-                        clean = clean[len(title):].strip()
-                    if len(clean) > 30:
-                        description = clean[:300]
 
-            if title and link:
-                # 清理标题
-                clean_title = title.rsplit(" - ", 1)[0].strip()
-
-                # 解析 Google News 重定向得到真实 URL
-                real_url = link
-                if "news.google.com/rss/articles" in link:
-                    try:
-                        head = requests.head(
-                            link,
-                            timeout=10,
-                            headers=HEADERS,
-                            allow_redirects=True,
-                        )
-                        real_url = head.url
-                    except Exception:
-                        pass
-
-                # 提取文章摘要
-                description = _extract_article_summary(real_url, description)
-
-                items.append(
-                    NewsItem(
-                        title=clean_title,
-                        source=source,
-                        url=real_url,
-                        published=pub_date,
-                        description=description,
-                    )
-                )
+            if title and len(title) > 10:
+                items.append(NewsItem(
+                    title=title.rsplit(" - ", 1)[0].strip(),
+                    source=source,
+                    url=link,
+                ))
 
         return items
 
