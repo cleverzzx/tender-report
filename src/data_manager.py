@@ -473,6 +473,12 @@ def _enrich_with_pdf(
                 )
                 if title_match:
                     new_title = title_match.group(0).strip().rstrip(".")
+                    # 截断到第一个合理边界（题目后跟的 Ministry/Division 等是下一字段）
+                    for cutoff in ["Ministry/Division", " Ministry ", "\nMinistry"]:
+                        cut_idx = new_title.find(cutoff)
+                        if cut_idx > 30:
+                            new_title = new_title[:cut_idx].strip().rstrip(".")
+                            break
                     if (
                         new_title
                         and len(new_title) > 20
@@ -671,15 +677,20 @@ def _enrich_with_pdf(
                         if "Bengali Title" in tender.title:
                             tender.title = desc[:200]
 
-                # 查找招标编号
+                # 查找招标编号（含 Petrobangla 格式 "Ref: 28.02.0000.000.052.02.0001.26.36")
                 tn_match = _re.search(
-                    r"Ref[:\s]+(\d{2}\.\d{2}\.\d{4}\.\d{3}\.\d{2}\.\d{4}\.\d{2}\.\d{2})",
+                    r"Ref[:\s]+(\d{2}\.\d{2}\.\d{4}\.\d{3}\.\d{3}\.\d{2}\.\d{4}\.\d{2}\.\d{2})",
                     raw_text,
                 )
-                if tn_match:
+                if tn_match and tn_match.group(1):
+                    new_tn = tn_match.group(1)
                     for fi, f in enumerate(tender.fields):
-                        if f.name == "招标编号" and ("Offshore" in str(f.value) or "未知" in str(f.value)):
-                            tender.fields[fi] = TenderField("招标编号", tn_match.group(1))
+                        if f.name == "招标编号" and (
+                            "Offshore" in str(f.value)
+                            or "未知" in str(f.value)
+                            or "Bidding Round" in str(f.value)
+                        ):
+                            tender.fields[fi] = TenderField("招标编号", new_tn)
                             break
 
     if scanned > 0 and ocr_success == 0:

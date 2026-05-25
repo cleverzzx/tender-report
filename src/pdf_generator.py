@@ -257,11 +257,33 @@ class PDFGenerator:
 
         company_summary = "<br/>".join(company_lines) if company_lines else "暂无有效国际招标"
 
+        # 动态提取重点关注领域
+        focus_keywords = {
+            "钻井/钻机设备": ["drill", "rig", "top drive", "mudlogging"],
+            "发电机/动力设备": ["generator", "engine", "perkins", "fg wilson", "caterpillar"],
+            "锅炉/加热设备": ["boiler", "heater", "fire tube", "oil bath"],
+            "电气/控制设备": ["soft starter", "vfd", "contactor", "acb", "magnetic"],
+            "仪表/计量设备": ["meter", "turbine", "flow computer", "instrument"],
+            "海上油气勘探": ["offshore", "bidding round", "seismic", "exploration"],
+            "环保/EIA咨询": ["eia", "environmental", "impact assessment"],
+            "机械备件": ["spare part", "mechanical", "备件"],
+        }
+        focus_areas = []
+        for _, company_tenders in tenders.items():
+            for t in company_tenders:
+                title_lower = (t.title + " " + t.special).lower()
+                for area, keywords in focus_keywords.items():
+                    if any(kw in title_lower for kw in keywords):
+                        if area not in focus_areas:
+                            focus_areas.append(area)
+
+        focus_text = "、".join(focus_areas) if focus_areas else "暂无"
+
         summary_text = (
             f"本报告共找到 <b>{total} 条</b> 有效国际招标（International Tender），"
             f"按发布日期倒序排列（最新发布在前）。其中：<br/><br/>"
             f"{company_summary}<br/><br/>"
-            f"重点关注领域：2000HP钻井交钥匙工程、发电机备件、锅炉火管、软启动器/变频器、卡特彼勒发电机备件。<br/>"
+            f"重点关注领域：{focus_text}。<br/>"
             f"<i>所有官方来源链接和PDF下载地址均已校验通过，可直接点击访问。</i>"
         )
         story.append(Paragraph(summary_text, self.styles["summary"]))
