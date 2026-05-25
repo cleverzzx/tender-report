@@ -1374,9 +1374,12 @@ def _deduplicate_tenders(
 
                 if is_dup:
                     # 合并：保留信息更丰富的那条，补充来源
-                    # 选择 fields 更多的
+                    # 如果有一条是新的，合并后保留 NEW 标记
+                    either_new = ti._is_new or tj._is_new
                     if len(tj.fields) > len(ti.fields):
-                        tlist[i], tlist[j] = tlist[j], tlist[i]  # 把更丰富的换到i位置
+                        tlist[i], tlist[j] = tlist[j], tlist[i]
+                    if either_new:
+                        tlist[i]._is_new = True
 
                     # 合并来源信息
                     richer, poorer = tlist[i], tlist[j]
