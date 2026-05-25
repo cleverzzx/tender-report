@@ -54,14 +54,20 @@ class NewsItem:
         self.description = description
         self.title_cn = ""  # 中文翻译
         self.category_cn = ""  # 分类标签
+        self.desc_cn = ""  # 中文摘要翻译
 
-    def to_html(self) -> str:
-        """转为 HTML 格式，中文标题 + 分类 + 来源 + 摘要"""
+    def to_html(self, index: int = 0) -> str:
+        """转为 HTML 格式，中文标题 + 分类 + 来源 + 摘要。
+
+        Args:
+            index: 序号（>0 时显示编号，否则显示 •）
+        """
         display_title = self.title_cn if self.title_cn else self.title
         pub = f" ({self.published})" if self.published else ""
         cat = f" [{self.category_cn}]" if self.category_cn else ""
+        prefix = f"<b>{index}.</b> " if index > 0 else "• "
         html = (
-            f"• {cat} <a href='{self.url}' color='blue'><b>{display_title}</b></a> "
+            f"{prefix}{cat} <a href='{self.url}' color='blue'><b>{display_title}</b></a> "
             f"— {self.source}{pub}<br/>"
         )
         if self.desc_cn:
@@ -258,8 +264,8 @@ def get_industry_news_html(validation_date: Optional[datetime] = None) -> str:
 
     # 动态展示（中文标题）
     parts.append("<b>行业动态与实时新闻</b><br/>")
-    for item in news_items:
-        parts.append(item.to_html())
+    for i, item in enumerate(news_items):
+        parts.append(item.to_html(index=i + 1))
 
     # 链接校验说明
     parts.append("<br/><b>链接校验说明</b><br/>")

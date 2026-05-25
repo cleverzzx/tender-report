@@ -27,8 +27,8 @@ def get_industry_news(validation_date: Optional[datetime] = None) -> str:
 
     if news_items:
         parts.append(f"<b>1. 国际能源市场动态（{today.month}月{today.day}日更新）</b><br/>")
-        for item in news_items[:6]:
-            parts.append(item.to_html() + "<br/><br/>")
+        for i, item in enumerate(news_items[:6]):
+            parts.append(item.to_html(index=i + 1) + "<br/><br/>")
     else:
         parts.append(f"<b>1. 国际能源市场动态（{today.month}月{today.day}日更新）</b><br/>")
         parts.append("• 暂无实时新闻数据<br/><br/>")
@@ -57,8 +57,8 @@ def get_industry_news(validation_date: Optional[datetime] = None) -> str:
     # 更多新闻（如果有）
     if len(news_items) > 6:
         parts.append("<b>5. 更多行业资讯</b><br/>")
-        for item in news_items[6:]:
-            parts.append(item.to_html() + "<br/><br/>")
+        for i, item in enumerate(news_items[6:]):
+            parts.append(item.to_html(index=i + 7) + "<br/><br/>")
         parts.append(f"<b>6. 链接校验说明</b><br/>")
     else:
         parts.append("<b>5. 链接校验说明</b><br/>")
