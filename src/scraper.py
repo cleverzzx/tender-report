@@ -935,25 +935,53 @@ def _extract_ocr_fields(text: str) -> Dict[str, Any]:
     # 规范化空格
     clean = re.sub(r"\s+", " ", text)
 
-    # ---- 截止日期 (Tender Closing Date and Time) ----
-    # OCR 中日期和时间之间可能有 | 或多种分隔符
+    # ---- 截止日期 (Tender Closing Date and Time / EOI closing date) ----
     closing_patterns = [
         r"Tender\s*Closing\s*Date\s*(?:and|&)\s*Time[:\s|]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*\|?\s*(\d{1,2}[.:]\d{2})",
         r"Closing\s*Date\s*(?:and|&)\s*Time[:\s|]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*\|?\s*(\d{1,2}[.:]\d{2})",
         r"Closing\s*Date[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*\|?\s*(\d{1,2}[.:]\d{2})",
         r"Tender\s*Closing\s*Date[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*\|?\s*(\d{1,2}[.:]\d{2})",
+        # EOI 格式: 标签和日期可能被OCR排版分隔，用宽窗口
+        r"EOI\s*closing\s*date\s*(?:and|&)\s*time[:\s]*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*(?:and|&)?\s*(\d{1,2}[.:]\d{2})",
     ]
+    deadline_found = False
     for pattern in closing_patterns:
         m = re.search(pattern, clean, re.IGNORECASE)
         if m:
             date_str = m.group(1)
             time_str = m.group(2) if m.lastindex and m.lastindex >= 2 else "00:00"
-            # OCR 常用点号代替冒号
             time_str = time_str.replace(".", ":")
             dt = _parse_date(f"{date_str} {time_str}")
             if dt:
                 result["deadline"] = dt.isoformat()
+                deadline_found = True
             break
+
+    # 宽窗口回退：搜索 "closing" 附近任意日期（OCR表格布局可能导致标签和值距离很远）
+    if not deadline_found:
+        for kw in ["EOI closing", "closing date", "closing"]:
+            kw_idx = clean.lower().find(kw)
+            if kw_idx < 0:
+                continue
+            # 扩大窗口到1200字符
+            window = clean[kw_idx : kw_idx + 1200]
+            nearby = list(
+                re.finditer(
+                    r"(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*(?:and|&)?\s*(\d{1,2}[.:]\d{2})",
+                    window,
+                )
+            )
+            # 取最后一个（通常最晚的日期是截止日期）
+            for m in reversed(nearby):
+                date_str = m.group(1)
+                time_str = m.group(2).replace(".", ":") if m.lastindex and m.lastindex >= 2 else "00:00"
+                dt = _parse_date(f"{date_str} {time_str}")
+                if dt and dt.year >= 2025:
+                    result["deadline"] = dt.isoformat()
+                    deadline_found = True
+                    break
+            if deadline_found:
+                break
 
     # ---- 标书价格 (Price of Tender Document) ----
     price_match = re.search(
@@ -1067,11 +1095,45 @@ def _extract_ocr_fields(text: str) -> Dict[str, Any]:
         if person:
             result["contact_person"] = person
 
+    # ---- EOI 专属: 任务简述 (Brief description of assignment) ----
+    eoi_desc_match = re.search(
+        r"Brief\s*description\s*of\s*assignment[:\s]*(.{30,800}?)(?:Experience,?\s*resources|Others\s*details|\n\s*\n\s*[A-Z][a-z])",
+        clean, re.IGNORECASE | re.DOTALL,
+    )
+    if not eoi_desc_match:
+        # 备选: 搜索 EOI 标题后的描述
+        eoi_desc_match = re.search(
+            r"(?:Title\s*of\s*Service|Expression\s*of\s*interest\s*for)[:\s]*(.{30,500}?)(?:EOI\s*Ref|Date|\n\s*\n)",
+            clean, re.IGNORECASE | re.DOTALL,
+        )
+    if eoi_desc_match:
+        desc = eoi_desc_match.group(1).strip()
+        desc = " ".join(desc.split())
+        if len(desc) > 20:
+            result["eoi_description"] = desc[:500]
+
+    # ---- EOI 专属: 资格 (Experience, resources and delivery capacity) ----
+    eoi_elig_match = re.search(
+        r"(?:Experience,?\s*resources\s*(?:and|&)\s*delivery\s*capacity\s*required|Others\s*details)[:\s]*(.{30,600}?)(?:\n\s*\n\s*[A-Z][a-z]|\nName\s*and\s*Address)",
+        clean, re.IGNORECASE | re.DOTALL,
+    )
+    if eoi_elig_match:
+        elig = eoi_elig_match.group(1).strip()
+        elig = " ".join(elig.split())
+        if len(elig) > 20:
+            result["eligibility"] = elig[:500]
+
     # ---- 项目名称 ----
     proj_match = re.search(
-        r"Project\s*Name[:\s]*(.{10,200}?)(?:Tender\s*Package|Tender\s*Publication|\d+\s*[|_])",
+        r"Project(?:/Programme)?\s*Name[:\s]*(.{10,250}?)(?:Tender\s*Package|Tender\s*Publication|\d+\s*[|_]|\d{2}[-/]\d{2}[-/]\d{4})",
         clean, re.IGNORECASE,
     )
+    if not proj_match:
+        # EOI 格式的 "Project/Programme name"
+        proj_match = re.search(
+            r"Project/Programme\s*name[:\s]*(.{10,250}?)(?:\d{2}[-/]\d{2}[-/]\d{4}|\n\s*\n)",
+            clean, re.IGNORECASE,
+        )
     if proj_match:
         proj = proj_match.group(1).strip()
         if len(proj) > 10:

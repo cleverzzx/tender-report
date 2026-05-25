@@ -459,6 +459,28 @@ def _enrich_with_pdf(
                 if pdf_data.get("eligibility"):
                     tender.fields.insert(9, TenderField("投标资格", pdf_data["eligibility"]))
 
+                # EOI 专属：用OCR描述更新采购内容
+                if pdf_data.get("eoi_description"):
+                    for fi, f in enumerate(tender.fields):
+                        if f.name == "采购内容":
+                            tender.fields[fi] = TenderField("采购内容", pdf_data["eoi_description"][:500])
+                            break
+
+                # 尝试从OCR提取英文标题（EOI文档通常有 Environmental Impact Assessment 等描述）
+                title_match = _re.search(
+                    r"(?:Environmental\s*Impact|EIA\s*(?:for|study)|Request\s*for\s*Expression).{20,300}?(?:\.\s|Consulting|\Z)",
+                    ocr_text, _re.IGNORECASE | _re.DOTALL,
+                )
+                if title_match:
+                    new_title = title_match.group(0).strip().rstrip(".")
+                    if (
+                        new_title
+                        and len(new_title) > 20
+                        and not any(0x0980 <= ord(ch) <= 0x09FF for ch in new_title)
+                        and "Bengali Title" in tender.title
+                    ):
+                        tender.title = new_title[:200]
+
                 # 项目名称
                 if pdf_data.get("project_name"):
                     tender.fields.insert(10, TenderField("项目名称", pdf_data["project_name"]))
@@ -592,6 +614,62 @@ def _enrich_with_pdf(
                 if pdf_data.get("USD") and "标书价格" not in tender.key and "合同金额" not in tender.key:
                     price_label = "投标文件价格" if is_bid_doc else "合同金额"
                     tender.key = f"{price_label} <b>USD {pdf_data['USD']}</b> | {tender.key}"
+
+                # 提取采购内容描述（非扫描PDF，用于替代孟加拉语/空标题）
+                procurement_match = _re.search(
+                    r"(?:Procurement|Description)\s*(?:of|:)?\s*(.{15,200}?)(?:\.\s|\n\s*\n|\n\s*\d)",
+                    raw_text, _re.IGNORECASE,
+                )
+                if not procurement_match:
+                    # e-GP 表格格式（单词可能被合并）
+                    procurement_match = _re.search(
+                        r"of\s+Different.{10,200}?(?:\.|\n)",
+                        raw_text, _re.IGNORECASE,
+                    )
+                if not procurement_match:
+                    # 从 tender_no 之后的文本提取
+                    tn = ""
+                    for f in tender.fields:
+                        if f.name == "招标编号":
+                            tn = f.value.strip()
+                            break
+                    if tn and tn.isdigit():
+                        tn_idx = raw_text.find(tn)
+                        if tn_idx >= 0:
+                            procurement_match = _re.search(
+                                r"\d{4}\s*\n\s*(.{15,200}?)(?:\n\s*\d{2}[./]\d{2}[./]\d{4}|\n\s*\n)",
+                                raw_text[tn_idx:],
+                                _re.IGNORECASE,
+                            )
+                            if procurement_match:
+                                procurement_match = _re.search(
+                                    r"(.+)",
+                                    procurement_match.group(1).strip(),
+                                )
+                if procurement_match:
+                    desc = procurement_match.group(1).strip() if procurement_match.lastindex else procurement_match.group(0).strip()
+                    # 修复合并的单词
+                    desc = _re.sub(r"([a-z])([A-Z])", r"\1 \2", desc)  # camelCase
+                    desc = _re.sub(r"([a-z])(\d)", r"\1 \2", desc)  # letter+digit
+                    desc = _re.sub(r",(\S)", r", \1", desc)  # comma without space
+                    desc = _re.sub(r"&(\S)", r"& \1", desc)  # ampersand without space
+                    desc = _re.sub(r"([a-z])of([A-Z])", r"\1 of \2", desc)  # merged 'of'
+                    # 去掉开头多余的 "of " 或 "of"
+                    desc = _re.sub(r"^of\s+", "", desc)
+                    desc = _re.sub(r";\s*", " ", desc)  # stray semicolons
+                    if len(desc) > 10:
+                        for fi, f in enumerate(tender.fields):
+                            if f.name == "采购内容":
+                                current = f.value.strip()
+                                is_bangla = any(
+                                    0x0980 <= ord(ch) <= 0x09FF for ch in current
+                                )
+                                if is_bangla or len(current) < 5 or current in ("()", "-") or "Bengali Title" in current:
+                                    tender.fields[fi] = TenderField("采购内容", desc[:300])
+                                break
+                        # 同时更新标题
+                        if "Bengali Title" in tender.title:
+                            tender.title = desc[:200]
 
                 # 查找招标编号
                 tn_match = _re.search(
@@ -801,41 +879,52 @@ def _enrich_with_detail_page(
                 detail = " ".join(detail.split())  # 去除多余空格
 
             if detail and len(detail) > 10:
+                # 跳过纯孟加拉语描述（中文字体无法渲染）
+                _has_bn = any(0x0980 <= ord(ch) <= 0x09FF for ch in detail)
+                if _has_bn and len([ch for ch in detail if 0x0980 <= ord(ch) <= 0x09FF]) > len(detail) * 0.3:
+                    detail = ""  # 太多孟加拉字符，跳过
+            if detail and len(detail) > 10:
                 # 去重：如果详细描述和标题差异较大才添加项目详情字段
                 if detail.lower() not in tender.title.lower() and len(detail) > len(tender.title):
                     tender.fields.insert(
                         3, TenderField("项目详情", detail[:500])
                     )
 
-                # 更新采购内容：优先使用详情页描述
+                # 更新采购内容：优先使用详情页描述（但跳过孟加拉语）
                 for fi, f in enumerate(tender.fields):
                     if f.name == "采购内容":
                         current = f.value.strip()
-                        # 如果详情页描述明显比当前采购内容更有信息量，则替换
                         should_update = False
-                        # 当前是标题，且标题主要是编号+日期（没有实质性描述）
                         if current == tender.title and len(detail) > len(current) * 0.5:
                             should_update = True
-                        # 当前太短
                         elif len(current) < 80 and len(detail) > len(current):
                             should_update = True
-                        # 详情页描述明显更长
                         elif len(detail) > len(current) + 20:
                             should_update = True
 
+                        # 不替换为纯孟加拉语（PDF无法渲染）
+                        _is_bn_detail = any(0x0980 <= ord(ch) <= 0x09FF for ch in detail)
+                        if _is_bn_detail and len([ch for ch in detail if 0x0980 <= ord(ch) <= 0x09FF]) > len(detail) * 0.3:
+                            should_update = False
+
                         if should_update:
-                            cleaner = detail[:300]
-                            tender.fields[fi] = TenderField("采购内容", cleaner)
+                            tender.fields[fi] = TenderField("采购内容", detail[:300])
                         break
             else:
-                # 详情页没有描述 → 引导用户查看PDF
                 for fi, f in enumerate(tender.fields):
                     if f.name == "采购内容":
                         current = f.value.strip()
-                        if len(current) < 60:
+                        # 检测当前是否为孟加拉语空渲染
+                        _is_bn_current = any(0x0980 <= ord(ch) <= 0x09FF for ch in current)
+                        if _is_bn_current or len(current) < 5 or current in ("()", "-"):
                             tender.fields[fi] = TenderField(
                                 "采购内容",
-                                f"{current}（完整技术规格和投标要求详见PDF招标文件）"
+                                f"[请查看PDF招标文件获取详细描述]"
+                            )
+                        elif len(current) < 60:
+                            tender.fields[fi] = TenderField(
+                                "采购内容",
+                                f"{current}（详见PDF招标文件）"
                             )
                         break
 
