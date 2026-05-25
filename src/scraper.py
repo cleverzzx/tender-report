@@ -846,6 +846,10 @@ def _parse_deadline(text: str) -> Optional[datetime]:
         r"not\s+later\s+than\s+(\d{1,2}\s+\w+\s+\d{4})",
         # "not later than 1:00 pm BST on 30th November 2026" (Petrobangla)
         r"not\s+later\s+than\s+(?:\d{1,2}:\d{2}\s*(?:am|pm|a\.m\.|p\.m\.)\s*(?:\w+\s+)?(?:on|of)\s+)?(\d{1,2}(?:st|nd|rd|th)?\s+\w+\s+\d{4})",
+        # e-GP table: "Last Date & Time for Submission 07.07.2026 14:00"
+        r"Last\s*Date\s*(?:&|and)\s*Time\s*(?:for\s*)?Submission[:\s]*(\d{1,2}[./]\d{1,2}[./]\d{4})\s*(\d{1,2}[.:]\d{2})",
+        # "Tender Closing Date & Time 07.07.2026 15:00" (e-GP table)
+        r"Tender\s*Closing\s*Date\s*(?:&|and)\s*Time[:\s]*(\d{1,2}[./]\d{1,2}[./]\d{4})\s*(\d{1,2}[.:]\d{2})",
     ]
     for pattern in patterns:
         m = re.search(pattern, text, re.IGNORECASE)
@@ -856,6 +860,22 @@ def _parse_deadline(text: str) -> Optional[datetime]:
             dt = _parse_date(date_str)
             if dt:
                 return dt
+
+    # 最后手段：找 Submission/Closing 附近所有日期，取最后一个（通常是截止日期）
+    for kw in ["Submission", "Closing", "Last Date"]:
+        kw_idx = text.lower().find(kw.lower())
+        if kw_idx >= 0:
+            nearby_dates = list(
+                re.finditer(
+                    r"(\d{1,2}[./-]\d{1,2}[./-]\d{4})", text[kw_idx : kw_idx + 400]
+                )
+            )
+            # 从后往前取，最后一个日期通常是截止日期
+            for m in reversed(nearby_dates):
+                dt = _parse_date(m.group(1))
+                if dt and dt.year >= 2025:
+                    return dt
+
     return None
 
 
@@ -973,7 +993,7 @@ def _extract_ocr_fields(text: str) -> Dict[str, Any]:
         if m:
             candidate = m.group(1).strip()
             # 过滤掉明显的误匹配（如 "No"、"FUNDING" 等）
-            if candidate.upper() not in ("NO", "FUNDING", "INFORMATION", "KEY", "DATE", "TIME"):
+            if candidate.upper() not in ("NO", "FUNDING", "INFORMATION", "KEY", "DATE", "TIME", "TICE", "NOTICE"):
                 result["tender_no_from_pdf"] = candidate
                 break
 
@@ -993,16 +1013,19 @@ def _extract_ocr_fields(text: str) -> Dict[str, Any]:
     # ---- 投标资格 (Eligibility): 查找有实质资格要求的段落 ----
     # 策略1：从 "Brief Eligibility" 或 "qualification" 关键词后的英文段落
     elig_match = re.search(
-        r"(?:Brief\s*Eligibility[^.]*?\.|qualification\s*(?:of|criteria))[:\s]*(.{30,400}?)(?:\s*\d+\s*[|_]\s*|\s*Price\s*of\s*Tender)",
+        r"(?:Brief\s*Eligibility|qualification\s*(?:of|criteria))\s*(?:and\s*Qualification\s*of\s*Tenderer)?[.:\s]*(.{30,400}?)(?:\s*\d+\s*[|_]\s*|\s*Price\s*of\s*Tender|\s*Brief\s*Description\s*of\s*Goods)",
         clean, re.IGNORECASE,
     )
     if elig_match:
         elig_text = elig_match.group(1).strip()
+        # 排除 Brief Description of Goods（这是采购内容不是资格）
+        if "Brief Description of Goods" in elig_text or "Description of Goods" in elig_text:
+            elig_text = ""
         # 清理
-        elig_text = re.sub(r"^\s*[°•▪▸]\s*", "", elig_text)  # 去掉开头符号
-        elig_text = re.sub(r"^of\s+", "", elig_text)  # 去掉开头 of
+        elig_text = re.sub(r"^\s*[°•▪▸]\s*", "", elig_text)
+        elig_text = re.sub(r"^of\s+", "", elig_text)
         elig_text = re.sub(r"The\s*minimum\s*of\s*years\b", "The minimum years", elig_text)
-        if len(elig_text) > 20:
+        if len(elig_text) > 20 and "As per Tender Document" not in elig_text:
             result["eligibility"] = elig_text[:400]
     else:
         # 策略2：找包含 experience/track record 的段落
@@ -1114,11 +1137,14 @@ def parse_pdf_fields(pdf_url: str) -> Dict[str, Any]:
 
     # 招标编号
     tn_pattern = re.search(
-        r"(?:Tender|TENDER)\s*(?:No|NO|Reference)[:\s#]*([A-Z0-9/()\-.]+(?:\s*dated[:\s]*[\d\-./]+)?)",
+        r"(?:Tender|TENDER)\s*(?:No|NO|Reference)\b[:\s#]*([A-Z0-9/()\-.]+(?:\s*dated[:\s]*[\d\-./]+)?)",
         cleaned,
         re.IGNORECASE,
     )
     if tn_pattern:
-        result["tender_no_from_pdf"] = tn_pattern.group(1).strip()
+        candidate = tn_pattern.group(1).strip()
+        # 过滤误匹配：长度太短或常见噪音词
+        if len(candidate) >= 3 and candidate.lower() not in ("tice", "no", "date", "time"):
+            result["tender_no_from_pdf"] = candidate
 
     return result
