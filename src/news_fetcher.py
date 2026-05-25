@@ -59,15 +59,13 @@ class NewsItem:
         """转为 HTML 格式，中文标题 + 分类 + 来源 + 摘要"""
         display_title = self.title_cn if self.title_cn else self.title
         pub = f" ({self.published})" if self.published else ""
-        cat = f" <font color='#1a365d'>[{self.category_cn}]</font>" if self.category_cn else ""
+        cat = f" [{self.category_cn}]" if self.category_cn else ""
         html = (
             f"• {cat} <a href='{self.url}' color='blue'><b>{display_title}</b></a> "
-            f"<font color='#6b7280'>— {self.source}{pub}</font><br/>"
+            f"— {self.source}{pub}<br/>"
         )
         if self.desc_cn:
-            html += (
-                f"<font color='#374151' size='2'>　{self.desc_cn[:200]}</font><br/>"
-            )
+            html += f"　{self.desc_cn[:200]}<br/>"
         return html
 
 
