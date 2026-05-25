@@ -280,7 +280,7 @@ class PDFGenerator:
         focus_text = "、".join(focus_areas) if focus_areas else "暂无"
 
         summary_text = (
-            f"本报告共找到 <b>{total} 条</b> 有效国际招标（International Tender），"
+            f"本报告共找到 <b>{total} 条</b> 有效国际招标（International Tender），"
             f"按发布日期倒序排列（最新发布在前）。其中：<br/><br/>"
             f"{company_summary}<br/><br/>"
             f"重点关注领域：{focus_text}。<br/>"
