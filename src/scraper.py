@@ -664,7 +664,7 @@ def scrape_detail_page(url: str) -> Optional[Dict[str, Any]]:
         ("Submission Date", "投标截止日期"),
         # 孟加拉语
         ("প্রকাশের তারিখ", "发布日期"),  # Publish Date
-        ("আর্কাইভ তারিখ", "截止日期"),    # Archive Date
+        ("আর্কাইভ তারিখ", "存档日期"),    # Archive Date - NOT a tender deadline
         ("দরপত্র জমাদানের শেষ তারিখ", "截止日期"),  # Tender submission deadline
         ("সমাপ্তির তারিখ", "截止日期"),  # Completion/Closing Date
     ]
@@ -673,6 +673,17 @@ def scrape_detail_page(url: str) -> Optional[Dict[str, Any]]:
             dt = _parse_date(fields[source_name])
             if dt:
                 data[f"parsed_{target_name}"] = dt.isoformat()
+
+    # 提取标题/描述字段（用于补充采购内容）
+    # শিরোনাম = 标题, বিষয় = 主题, দরপত্রের বিবরণ = 招标描述
+    desc_fields = ["শিরোনাম", "বিষয়", "দরপত্রের বিবরণ", "Subject", "Description"]
+    for df in desc_fields:
+        if df in fields and fields[df]:
+            val = fields[df].strip()
+            # 如果值有意义且不同于页面标题
+            if len(val) > 10 and val != data.get("title", ""):
+                data["parsed_描述"] = val
+                break
 
     # 全文搜索日期（作为后备）
     if "parsed_截止日期" not in data and "parsed_投标截止日期" not in data:
