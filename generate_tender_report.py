@@ -74,7 +74,7 @@ def create_styles(chinese_font):
     accent_color = HexColor('#e53e3e')
     secondary_color = HexColor('#4a5568')
 
-    fs = CONFIG["font_size"]
+    fs = CONFIG.get("font_size")
     font = chinese_font if chinese_font != 'Helvetica' else 'Helvetica'
     bold_font = chinese_font if chinese_font != 'Helvetica' else 'Helvetica-Bold'
 
@@ -475,7 +475,7 @@ def generate_pdf(tenders=None, output_filename=None, output_dir=None):
         tenders = get_tender_data()
 
     if output_dir is None:
-        output_dir = CONFIG["output_dir"]
+        output_dir = CONFIG.get("output_dir")
 
     if output_filename is None:
         output_filename = f"孟加拉标讯报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
@@ -518,11 +518,32 @@ def generate_pdf(tenders=None, output_filename=None, output_dir=None):
             company_lines.append(f"• <b>{company_key}</b>: {count} 条国际招标")
     company_summary = "<br/>".join(company_lines) if company_lines else "暂无有效国际招标"
 
+    # 动态提取重点关注领域
+    focus_areas = []
+    for company_tenders in tenders.values():
+        for tender in company_tenders:
+            title = tender.get("title", "").lower()
+            # 提取关键领域关键词
+            if "drill" in title or "钻井" in title or "rig" in title:
+                focus_areas.append("钻井设备")
+            if "generator" in title or "发电机" in title:
+                focus_areas.append("发电机备件")
+            if "boiler" in title or "火管" in title or "heater" in title:
+                focus_areas.append("锅炉设备")
+            if "soft starter" in title or "vfd" in title or "变频器" in title or "contactor" in title:
+                focus_areas.append("电气控制设备")
+            if "spare part" in title or "备件" in title:
+                focus_areas.append("机械备件")
+            if "caterpillar" in title:
+                focus_areas.append("卡特彼勒设备")
+    # 去重并格式化
+    focus_text = "、".join(list(dict.fromkeys(focus_areas))) if focus_areas else "暂无"
+
     summary_text = (
         f"本报告共找到 <b>{total} 条</b> 有效国际招标（International Tender），"
         f"按发布日期倒序排列（最新发布在前）。其中：<br/><br/>"
         f"{company_summary}<br/><br/>"
-        f"重点关注领域：2000HP钻井交钥匙工程、发电机备件、锅炉火管、软启动器/变频器、卡特彼勒发电机备件。<br/>"
+        f"重点关注领域：{focus_text}。<br/>"
         f"<i>所有官方来源链接和PDF下载地址均已校验通过，可直接点击访问。</i>"
     )
     story.append(Paragraph(summary_text, styles["summary"]))

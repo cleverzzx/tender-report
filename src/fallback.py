@@ -18,7 +18,7 @@ def get_fallback_tenders() -> Dict[str, List[Dict[str, Any]]]:
             {
                 "title": "2000 HP AC-AC VFD Land Drilling Rig 交钥匙工程",
                 "key": (
-                    "截止日期 <b>2026-05-18 11:30 BST</b> | "
+                    "截止日期 <b>2026-05-18 11:30</b> | "
                     "标书价格 <b>BDT 12,000 / USD 98</b> | "
                     "保证金 <b>USD 385,000</b>"
                 ),
@@ -29,10 +29,10 @@ def get_fallback_tenders() -> Dict[str, List[Dict[str, Any]]]:
                 "fields": [
                     ["招标编号", "BAPEX/Admin/Int/Ten-1308/2026 (2nd Extension)"],
                     ["采购方式", "International Turn-Key Tender"],
-                    ["发布日期", "2026-01-28 / 延期公告 2026-04-13"],
-                    ["标书发售截止", "2026-05-17 15:00 BST"],
-                    ["投标截止日期", "2026-05-18 11:30 BST"],
-                    ["开标日期", "2026-05-18 12:30 BST"],
+                    ["发布日期", "2026-01-28 / 2026-04-13"],
+                    ["标书发售截止", "2026-05-17 15:00"],
+                    ["投标截止日期", "2026-05-18 11:30"],
+                    ["开标日期", "2026-05-18 12:30"],
                     ["标书价格", "BDT 12,000 或 USD 98 (不退)"],
                     ["投标保证金", "USD 385,000 (仅接受银行保函)"],
                     ["投标有效期", "180天"],
@@ -69,7 +69,7 @@ def get_fallback_tenders() -> Dict[str, List[Dict[str, Any]]]:
                     "Generator Engine Model: 4006-23TRSL"
                 ),
                 "key": (
-                    "截止日期 <b>2026-05-06 14:15 BST</b> | "
+                    "截止日期 <b>2026-05-06 14:15</b> | "
                     "标书价格 <b>USD 50 / BDT 6,000</b> | "
                     "保证金 <b>USD 570 / BDT 70,000</b>"
                 ),
@@ -81,8 +81,8 @@ def get_fallback_tenders() -> Dict[str, List[Dict[str, Any]]]:
                     ["招标编号", "BGFCL/GOODS(FP)/234(R1) Dated April 05, 2026"],
                     ["采购方式", "Foreign/International Tender (Re-Tender)"],
                     ["发布日期", "2026-04-05 / 2026-04-07"],
-                    ["截止日期", "2026-05-06 14:15 BST"],
-                    ["开标日期", "2026-05-06 14:30 BST"],
+                    ["截止日期", "2026-05-06 14:15"],
+                    ["开标日期", "2026-05-06 14:30"],
                     ["标书价格", "BDT 6,000 或 USD 50 (不退)"],
                     ["投标保证金", "USD 570 或 BDT 70,000 (仅接受银行保函)"],
                     [
@@ -118,7 +118,7 @@ def get_fallback_tenders() -> Dict[str, List[Dict[str, Any]]]:
             {
                 "title": "International Tender - Procurement of Fire Tube Pipe for Oil Bath Heater",
                 "key": (
-                    "截止日期 <b>2026-05-18 14:15 BST</b> | "
+                    "截止日期 <b>2026-05-18 14:15</b> | "
                     "标书价格 <b>USD 50 / BDT 6,000</b> | "
                     "保证金 <b>USD 940 / BDT 115,000</b>"
                 ),
@@ -130,8 +130,8 @@ def get_fallback_tenders() -> Dict[str, List[Dict[str, Any]]]:
                     ["招标编号", "BGFCL/GOODS(FP)/239"],
                     ["采购方式", "Foreign/International Tender (One Stage Two envelope)"],
                     ["发布日期", "2026-04-06 / 2026-04-08"],
-                    ["截止日期", "2026-05-18 14:15 BST"],
-                    ["开标日期", "2026-05-18 14:30 BST"],
+                    ["截止日期", "2026-05-18 14:15"],
+                    ["开标日期", "2026-05-18 14:30"],
                     ["标书价格", "BDT 6,000 或 USD 50 (不退)"],
                     ["投标保证金", "USD 940 或 BDT 115,000 (仅接受银行保函)"],
                     ["采购内容", "Fire Tube Pipe for Oil Bath Heater (锅炉火管)"],
@@ -163,7 +163,7 @@ def get_fallback_tenders() -> Dict[str, List[Dict[str, Any]]]:
             {
                 "title": "Procurement of Soft Starter, VFD, Magnetic Contractor & ACB",
                 "key": (
-                    "截止日期 <b>2026-06-18 12:00 BST</b> | "
+                    "截止日期 <b>2026-06-18 12:00</b> | "
                     "标书价格 <b>USD 98 / BDT 12,000</b> | "
                     "保证金 <b>USD 2,550 / BDT 310,000</b>"
                 ),
@@ -175,8 +175,8 @@ def get_fallback_tenders() -> Dict[str, List[Dict[str, Any]]]:
                     ["招标编号", "SGFL/CFP/RCFP/CRU/25-26/FP-08"],
                     ["采购方式", "International Procurement (One Stage Two envelope)"],
                     ["发布日期", "2026-04-28"],
-                    ["截止日期", "2026-06-18 12:00 BST"],
-                    ["开标日期", "2026-06-18 12:15 BST"],
+                    ["截止日期", "2026-06-18 12:00"],
+                    ["开标日期", "2026-06-18 12:15"],
                     ["标书发售截止", "2026-06-17"],
                     ["标书价格", "BDT 12,000 或 USD 98 (不退)"],
                     ["投标保证金", "BDT 310,000 或 USD 2,550"],
