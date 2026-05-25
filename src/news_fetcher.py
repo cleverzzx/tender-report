@@ -43,19 +43,42 @@ class NewsItem:
         self.url = url
         self.published = published
         self.description = description
+        self.title_cn = ""  # 中文翻译
 
     def to_html(self) -> str:
-        """转为 HTML 格式，含摘要"""
+        """转为 HTML 格式，中文标题 + 来源"""
+        display_title = self.title_cn if self.title_cn else self.title
         pub = f" ({self.published})" if self.published else ""
-        desc_html = ""
-        if self.description and len(self.description) > 20:
-            desc_html = (
-                f"<br/><font color='#374151' size='2'>　　{self.description[:120]}</font>"
-            )
         return (
-            f"• <a href='{self.url}' color='blue'>{self.title}</a> "
-            f"<font color='#6b7280'>— {self.source}{pub}</font>{desc_html}"
+            f"• <a href='{self.url}' color='blue'>{display_title}</a> "
+            f"<font color='#6b7280'>— {self.source}{pub}</font><br/>"
         )
+
+
+def _translate_titles(items: List[NewsItem]) -> None:
+    """批量翻译新闻标题为中文。"""
+    if not items:
+        return
+    try:
+        from deep_translator import GoogleTranslator
+
+        translator = GoogleTranslator(source="auto", target="zh-CN")
+        titles = [item.title for item in items]
+        # 逐个翻译（批量接口不稳定）
+        for i, item in enumerate(items):
+            try:
+                # 清理标题（去掉来源后缀）
+                clean_title = item.title.rsplit(" - ", 1)[0].strip()
+                if len(clean_title) > 10:
+                    cn = translator.translate(clean_title)
+                    if cn and len(cn) > 2:
+                        item.title_cn = cn
+            except Exception:
+                pass
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning(f"翻译失败: {e}")
 
 
 class NewsFetcher:
@@ -214,15 +237,17 @@ def get_industry_news_html(validation_date: Optional[datetime] = None) -> str:
         news_items = []
 
     if not news_items:
-        # 无新闻可展示，只保留链接校验说明
         parts.append("<b>链接校验说明</b><br/>")
         parts.append(f"• 本报告所有官方来源链接和PDF下载地址均于{fmt_date}校验通过，可正常访问。")
         return "".join(parts)
 
-    # 有新闻 → 动态展示
+    # 翻译为中文
+    _translate_titles(news_items)
+
+    # 动态展示（中文标题）
     parts.append("<b>行业动态与实时新闻</b><br/>")
     for item in news_items:
-        parts.append(item.to_html() + "<br/>")
+        parts.append(item.to_html())
 
     # 链接校验说明
     parts.append("<br/><b>链接校验说明</b><br/>")
