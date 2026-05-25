@@ -269,7 +269,7 @@ def get_industry_news_html(validation_date: Optional[datetime] = None) -> str:
         parts.append("<br/>")
 
     # 链接校验说明
-    parts.append("<br/><b>链接校验说明</b><br/>")
+    parts.append("<b>链接校验说明</b><br/>")
     parts.append(f"• 本报告所有官方来源链接和PDF下载地址均于{fmt_date}校验通过，可正常访问。")
 
     return "".join(parts)
