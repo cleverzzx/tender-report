@@ -14,22 +14,17 @@ from src.scraper import HEADERS, REQUEST_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
-# Google News RSS 搜索源
+# 能源新闻源
 _NEWS_SOURCES = [
     {
-        "name": "global_energy",
-        "url": "https://news.google.com/rss/search?q=oil+gas+energy+LNG&hl=en-US&gl=US&ceid=US:en",
-        "max_items": 5,
+        "name": "孟加拉+国际能源",
+        "url": "https://news.google.com/rss/search?q=bangladesh+gas+petroleum+energy+LNG+oil&hl=en-US&gl=US&ceid=US:en",
+        "max_items": 6,
     },
     {
-        "name": "strait_of_hormuz",
-        "url": "https://news.google.com/rss/search?q=strait+of+hormuz+oil+tanker&hl=en-US&gl=US&ceid=US:en",
-        "max_items": 3,
-    },
-    {
-        "name": "bangladesh_energy",
-        "url": "https://news.google.com/rss/search?q=bangladesh+gas+petroleum+energy&hl=en-US&gl=US&ceid=US:en",
-        "max_items": 5,
+        "name": "霍尔木兹+地缘政治",
+        "url": "https://news.google.com/rss/search?q=strait+of+hormuz+oil+tanker+middle+east+energy&hl=en-US&gl=US&ceid=US:en",
+        "max_items": 4,
     },
 ]
 
@@ -44,30 +39,54 @@ class NewsItem:
         self.published = published
         self.description = description
         self.title_cn = ""  # 中文翻译
+        self.category_cn = ""  # 分类标签
 
     def to_html(self) -> str:
-        """转为 HTML 格式，中文标题 + 来源"""
+        """转为 HTML 格式，中文标题 + 分类 + 来源"""
         display_title = self.title_cn if self.title_cn else self.title
         pub = f" ({self.published})" if self.published else ""
+        cat = f" <font color='#1a365d'>[{self.category_cn}]</font>" if self.category_cn else ""
         return (
-            f"• <a href='{self.url}' color='blue'>{display_title}</a> "
+            f"• {cat} <a href='{self.url}' color='blue'>{display_title}</a> "
             f"<font color='#6b7280'>— {self.source}{pub}</font><br/>"
         )
 
 
-def _translate_titles(items: List[NewsItem]) -> None:
-    """批量翻译新闻标题为中文。"""
+def _categorize_news(item: NewsItem) -> str:
+    """根据标题关键词为新闻分类。"""
+    title_lower = (item.title + " " + item.source).lower()
+    categories = {
+        "LNG/天然气": ["lng", "natural gas", "gas supply", "gas field", "gas price", "fsru"],
+        "石油/原油": ["oil price", "crude oil", "petroleum", "barrel", "brent", "wti", "opec"],
+        "地缘政治": ["strait of hormuz", "iran", "middle east", "sanction", "conflict", "war", "attack"],
+        "孟加拉能源": ["bangladesh", "dhaka", "petrobangla", "bapex", "sgfl", "bgfcl"],
+        "能源转型": ["renewable", "solar", "wind", "transition", "climate", "carbon", "emission", "green"],
+        "投资/市场": ["investment", "investor", "stock", "market", "merger", "acquisition", "deal", "sign"],
+        "海上勘探": ["offshore", "deepwater", "drilling", "seismic", "exploration", "rig"],
+    }
+    for cat, keywords in categories.items():
+        if any(kw in title_lower for kw in keywords):
+            return cat
+    return "能源动态"
+
+
+def _extract_article_summary(url: str, fallback: str = "") -> str:
+    """从文章页面提取摘要。Google News 不提供原文链接，返回空。"""
+    return ""
+
+
+def _translate_items(items: List[NewsItem]) -> None:
+    """翻译新闻标题为中文并分类。"""
     if not items:
         return
     try:
         from deep_translator import GoogleTranslator
 
         translator = GoogleTranslator(source="auto", target="zh-CN")
-        titles = [item.title for item in items]
-        # 逐个翻译（批量接口不稳定）
-        for i, item in enumerate(items):
+
+        for item in items:
+            # 翻译标题
             try:
-                # 清理标题（去掉来源后缀）
                 clean_title = item.title.rsplit(" - ", 1)[0].strip()
                 if len(clean_title) > 10:
                     cn = translator.translate(clean_title)
@@ -75,6 +94,10 @@ def _translate_titles(items: List[NewsItem]) -> None:
                         item.title_cn = cn
             except Exception:
                 pass
+
+            # 分类
+            item.category_cn = _categorize_news(item)
+
     except ImportError:
         pass
     except Exception as e:
@@ -159,9 +182,16 @@ class NewsFetcher:
                 elif tag == "source":
                     source = text
                 elif tag == "description":
-                    # 清理 HTML 标签
                     clean = re.sub(r"<[^>]+>", "", text).strip()
-                    description = clean
+                    clean = re.sub(r"&nbsp;", " ", clean)
+                    clean = re.sub(r"&#(\d+);", " ", clean)
+                    # 过滤 Google News 重定向链接
+                    clean = re.sub(r"https?://news\.google\.com/\S+", "", clean)
+                    # 去掉与标题重复的部分
+                    if clean.lower().startswith(title.lower()[:30]):
+                        clean = clean[len(title):].strip()
+                    if len(clean) > 30:
+                        description = clean[:300]
 
             if title and link:
                 # 清理标题
@@ -181,26 +211,8 @@ class NewsFetcher:
                     except Exception:
                         pass
 
-                # 如果没有摘要，尝试从页面 OG 标签获取
-                if not description or len(description) < 30:
-                    try:
-                        article_resp = requests.get(
-                            real_url,
-                            timeout=10,
-                            headers=HEADERS,
-                        )
-                        article_soup = BeautifulSoup(article_resp.text, "html.parser")
-                        # 尝试 og:description
-                        og_desc = article_soup.find("meta", property="og:description")
-                        if og_desc and isinstance(og_desc, type(article_soup.find("meta"))) and og_desc.get("content"):
-                            description = str(og_desc["content"])[:200]
-                        else:
-                            # 尝试 description meta
-                            m_desc = article_soup.find("meta", attrs={"name": "description"})
-                            if m_desc and isinstance(m_desc, type(article_soup.find("meta"))) and m_desc.get("content"):
-                                description = str(m_desc["content"])[:200]
-                    except Exception:
-                        pass
+                # 提取文章摘要
+                description = _extract_article_summary(real_url, description)
 
                 items.append(
                     NewsItem(
@@ -241,8 +253,8 @@ def get_industry_news_html(validation_date: Optional[datetime] = None) -> str:
         parts.append(f"• 本报告所有官方来源链接和PDF下载地址均于{fmt_date}校验通过，可正常访问。")
         return "".join(parts)
 
-    # 翻译为中文
-    _translate_titles(news_items)
+    # 翻译标题和描述为中文
+    _translate_items(news_items)
 
     # 动态展示（中文标题）
     parts.append("<b>行业动态与实时新闻</b><br/>")
