@@ -68,7 +68,7 @@ class NewsItem:
         prefix = f"<b>{index}.</b> " if index > 0 else "• "
         html = (
             f"{prefix}{cat} <a href='{self.url}' color='blue'><b>{display_title}</b></a> "
-            f"— {self.source}{pub}<br/>"
+            f"— {self.source}{pub}<br/>"
         )
         if self.desc_cn:
             html += f"　{self.desc_cn[:200]}<br/>"
@@ -263,9 +263,10 @@ def get_industry_news_html(validation_date: Optional[datetime] = None) -> str:
     _translate_items(news_items)
 
     # 动态展示（中文标题）
-    parts.append("<b>行业动态与实时新闻</b><br/>")
+    parts.append("<b>行业动态与实时新闻</b><br/><br/>")
     for i, item in enumerate(news_items):
         parts.append(item.to_html(index=i + 1))
+        parts.append("<br/>")
 
     # 链接校验说明
     parts.append("<br/><b>链接校验说明</b><br/>")

@@ -139,6 +139,14 @@ class PDFGenerator:
                 textColor=black,
                 spaceAfter=5,
             ),
+            "news_body": ParagraphStyle(
+                "NewsBody",
+                fontName=font,
+                fontSize=14,
+                leading=24,
+                textColor=black,
+                spaceAfter=8,
+            ),
             "footer": ParagraphStyle(
                 "Footer",
                 fontName=font,
@@ -302,7 +310,7 @@ class PDFGenerator:
         chinese_nums = {2: "二", 3: "三", 4: "四", 5: "五", 6: "六"}
         num_prefix = chinese_nums.get(section_num, str(section_num))
         story.append(Paragraph(f"{num_prefix}、行业动态与市场观察", self.styles["section"]))
-        story.append(Paragraph(get_industry_news_html(validation_date), self.styles["summary"]))
+        story.append(Paragraph(get_industry_news_html(validation_date), self.styles["news_body"]))
         story.append(Spacer(1, 24))
 
     def _render_footer(self, story: List, now: datetime) -> None:
