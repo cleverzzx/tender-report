@@ -5,6 +5,6 @@
 #       ./run.sh --scrape         # 爬取+生成
 #       ./run.sh --validate-only  # 仅校验链接
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit
 source .venv/bin/activate
 exec python main.py --no-email "$@"
