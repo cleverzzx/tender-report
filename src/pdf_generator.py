@@ -26,6 +26,37 @@ from src.utils import register_chinese_fonts
 logger = logging.getLogger(__name__)
 
 
+# 标讯详情表字段标准顺序（未列出的字段排在最后，保持原有相对顺序）
+_FIELD_ORDER: List[str] = [
+    "内容类型",
+    "招标编号",
+    "发布日期",
+    "截止日期", "投标截止日期",
+    "标书发售截止", "标书可获取日期",
+    "采购内容",
+    "项目详情",
+    "项目名称",
+    "合同金额(USD)", "合同金额(BDT)",
+    "标书价格",
+    "投标文件价格(USD)", "投标文件价格(BDT)",
+    "投标保证金",
+    "履约保证金",
+    "采购方式",
+    "投标有效期",
+    "合同期",
+    "投标资格",
+    "联系人",
+    "官方来源",
+    "PDF下载",
+]
+
+
+def _sort_fields(fields: List) -> List:
+    """按标准顺序排列标讯详情表字段。"""
+    priority = {name: i for i, name in enumerate(_FIELD_ORDER)}
+    return sorted(fields, key=lambda f: priority.get(f.name, 999))
+
+
 class PDFGenerator:
     """PDF 报告生成器"""
 
@@ -198,12 +229,13 @@ class PDFGenerator:
         story.append(Paragraph(f"■ Special: {tender.special}", self.styles["special"]))
         story.append(Spacer(1, 8))
 
+        sorted_fields = _sort_fields(tender.fields)
         table_data = [
             [
                 Paragraph(field.name, self.styles["table_label"]),
                 Paragraph(field.value, self.styles["table_value"]),
             ]
-            for field in tender.fields
+            for field in sorted_fields
         ]
         t = Table(table_data, colWidths=[120, 350])
         t.setStyle(TableStyle(self.TABLE_STYLE_CMDS))
